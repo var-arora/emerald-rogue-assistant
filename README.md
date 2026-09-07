@@ -23,7 +23,7 @@ It builds for Windows, macOS, and Linux.
 - Linux x86_64
 
 The app has been tested during play on Apple silicon with mGBA 0.10.5
-and Emerald Rogue 2.2.0 Vanilla. Windows, Linux, EX, Home Box recovery, and
+and Emerald Rogue 2.2.0 Vanilla. Windows, Linux, EX, and
 cross-platform multiplayer still need more live testing.
 
 Both players must use this version of the assistant for multiplayer. It cannot

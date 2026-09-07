@@ -68,8 +68,11 @@ The log file is named `RogueAssistant.log`:
 
 - Windows: `%APPDATA%\Emerald Rogue Assistant\logs`
 - macOS: `~/Library/Application Support/assistant.emerald.rogue/logs`
-- Linux: `$XDG_DATA_HOME/emerald-rogue-assistant/logs`, or
-  `~/.local/share/emerald-rogue-assistant/logs`
+- Linux Flatpak: `~/.var/app/assistant.emerald.rogue/data/emerald-rogue-assistant/logs`
+
+If you built the Linux app from source and run it outside Flatpak, see
+[User files](installation.md#user-files) for its data folder. The log is in
+the `logs` folder there.
 
 When you report a problem, include:
 
