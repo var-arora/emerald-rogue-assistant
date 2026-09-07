@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>assistant.emerald.rogue</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>Emerald Rogue Assistant</name>
+  <summary>Use Extended Storage and multiplayer in Pokémon Emerald Rogue</summary>
+  <description>
+    <p>Connect to Pokémon Emerald Rogue running in mGBA. Store Pokémon outside your game save with Home Box and connect to other players through the game's multiplayer features.</p>
+    <p>Requires mGBA 0.10.5 or later and Emerald Rogue 2.2.0 or later. Load the assistant's Lua script in mGBA to connect. No ROM or emulator is included.</p>
+  </description>
+  <launchable type="desktop-id">assistant.emerald.rogue.desktop</launchable>
+  <releases>
+    <release version="@ROGUE_ASSISTANT_VERSION@" date="@ROGUE_PACKAGE_DATE@" />
+  </releases>
+  <url type="homepage">https://github.com/var-arora/emerald-rogue-assistant</url>
+  <url type="bugtracker">https://github.com/var-arora/emerald-rogue-assistant/issues</url>
+</component>

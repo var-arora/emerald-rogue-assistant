@@ -15,7 +15,7 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RogueAssistant-build.txt"
     CONTENT "${ROGUE_ASSISTANT_VERSION}\n${ROGUE_ASSISTANT_BUILD_LABEL}\n")
 
 if(MSVC)
-    # Use the static runtime so the ZIP works without a separate Visual C++
+    # Use the static runtime so the app works without a separate Visual C++
     # Redistributable install.
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
@@ -207,26 +207,6 @@ set(
     RogueAssistantCpp/Assets/RogueAssistant_mGBA.lua
 )
 
-set(
-    ROGUE_ROOT_DOCUMENT_FILES
-    README.md
-    THIRD_PARTY_NOTICES.md
-)
-
-set(
-    ROGUE_GUIDE_DOCUMENT_FILES
-    docs/architecture.md
-    docs/bridge-protocol.md
-    docs/development.md
-    docs/home-box-format.md
-    docs/installation.md
-    docs/multiplayer-protocol.md
-    docs/release.md
-    docs/troubleshooting.md
-)
-
-set(ROGUE_DOCUMENT_FILES ${ROGUE_ROOT_DOCUMENT_FILES} ${ROGUE_GUIDE_DOCUMENT_FILES})
-
 if(ROGUE_BUILD_DESKTOP)
     set(ROGUE_DESKTOP_SOURCES)
     if(WIN32)
@@ -294,12 +274,8 @@ if(ROGUE_BUILD_DESKTOP)
             PROPERTIES MACOSX_PACKAGE_LOCATION Resources
         )
         set_source_files_properties(
-            ${ROGUE_ROOT_DOCUMENT_FILES}
+            THIRD_PARTY_NOTICES.md
             PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Documentation
-        )
-        set_source_files_properties(
-            ${ROGUE_GUIDE_DOCUMENT_FILES}
-            PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Documentation/docs
         )
         set_source_files_properties(
             ${ROGUE_DEPENDENCY_LICENSE_FILES}
@@ -315,7 +291,7 @@ if(ROGUE_BUILD_DESKTOP)
             RogueAssistant
             PRIVATE
                 ${ROGUE_RESOURCE_FILES}
-                ${ROGUE_DOCUMENT_FILES}
+                THIRD_PARTY_NOTICES.md
                 ${ROGUE_DEPENDENCY_LICENSE_FILES}
                 ${ROGUE_MACOS_ICON}
         )
@@ -325,6 +301,10 @@ if(ROGUE_BUILD_DESKTOP)
         )
         install(TARGETS RogueAssistant BUNDLE DESTINATION . COMPONENT RogueAssistant)
     else()
+        set(ROGUE_INSTALL_BIN_DIRECTORY ${CMAKE_INSTALL_BINDIR})
+        if(WIN32)
+            set(ROGUE_INSTALL_BIN_DIRECTORY .)
+        endif()
         add_custom_command(
             TARGET RogueAssistant
             POST_BUILD
@@ -342,25 +322,23 @@ if(ROGUE_BUILD_DESKTOP)
         endforeach()
         install(
             TARGETS RogueAssistant
-            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            RUNTIME DESTINATION ${ROGUE_INSTALL_BIN_DIRECTORY}
             COMPONENT RogueAssistant
         )
         install(
             FILES ${ROGUE_RESOURCE_FILES}
-            DESTINATION ${CMAKE_INSTALL_BINDIR}/resources
+            DESTINATION ${ROGUE_INSTALL_BIN_DIRECTORY}/resources
             COMPONENT RogueAssistant
         )
     endif()
 
-    if(NOT APPLE)
+    if(WIN32)
+        install(FILES THIRD_PARTY_NOTICES.md DESTINATION Documentation COMPONENT RogueAssistant)
+        install(FILES ${ROGUE_DEPENDENCY_LICENSE_FILES} DESTINATION Documentation/licenses COMPONENT RogueAssistant)
+    elseif(NOT APPLE)
         install(
-            FILES ${ROGUE_ROOT_DOCUMENT_FILES}
+            FILES THIRD_PARTY_NOTICES.md
             DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/RogueAssistant
-            COMPONENT RogueAssistant
-        )
-        install(
-            FILES ${ROGUE_GUIDE_DOCUMENT_FILES}
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/RogueAssistant/docs
             COMPONENT RogueAssistant
         )
         install(
@@ -371,6 +349,17 @@ if(ROGUE_BUILD_DESKTOP)
     endif()
 
     if(UNIX AND NOT APPLE)
+        string(TIMESTAMP ROGUE_PACKAGE_DATE "%Y-%m-%d" UTC)
+        configure_file(
+            packaging/linux/${ROGUE_ASSISTANT_APPLICATION_ID}.metainfo.xml.in
+            generated/${ROGUE_ASSISTANT_APPLICATION_ID}.metainfo.xml
+            @ONLY
+        )
+        install(
+            FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/${ROGUE_ASSISTANT_APPLICATION_ID}.metainfo.xml
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
+            COMPONENT RogueAssistant
+        )
         install(
             FILES packaging/linux/${ROGUE_ASSISTANT_APPLICATION_ID}.desktop
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications

@@ -8,6 +8,7 @@ RogueAssistantCpp/External/** -diff
 *.icns binary
 *.dmg binary
 *.AppImage binary
+*.flatpak binary
 *.ttf binary
 *.lib binary
 *.dll binary

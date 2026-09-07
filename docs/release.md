@@ -27,54 +27,58 @@ Package names are generated automatically. In this list, `<build>` is the
 release version or development label. Do not rename packages to change their
 version; that would leave the version inside the app unchanged.
 
-- `RogueAssistant-<build>-windows-x64.zip`
+- `RogueAssistant-<build>-windows-x64.exe`
 - `RogueAssistant-<build>-macos-arm64.dmg`
-- `RogueAssistant-<build>-linux-x86_64.AppImage`
-- `RogueAssistant-<build>-linux-x86_64.tar.gz`
+- `RogueAssistant-<build>-linux-x86_64.flatpak`
 - `THIRD_PARTY_NOTICES.md`
 - `SHA256SUMS`
 
-The macOS DMG contains the app and an Applications shortcut. Third-party
-notices, dependency licenses, and guides are inside the app, under
-`Contents/Resources/Documentation`. There is no separate macOS app ZIP.
-Windows and Linux packages also include the notices, licenses, and guides.
+The macOS DMG has a compact drag-to-install window with the app and an
+Applications shortcut. Third-party notices and dependency licenses are inside
+the app, under `Contents/Resources/Documentation`. Guides stay in the
+repository. There is no separate macOS app ZIP.
+The Windows installer keeps notices and licenses in the app's `Documentation`
+folder. The Linux Flatpak keeps them under `/app/share/doc/RogueAssistant`
+inside its installation. Each system has one download format.
 
 ## Local package builds
 
 Use only the preset for the current system. Each preset is a saved set of
 build options. These commands also require Ninja, the tool that runs the build.
 
-On Windows:
+On Windows, install Inno Setup 6.3 or later and use PowerShell 7:
 
 ```sh
 cmake --preset release-windows-x64 --fresh -G Ninja
 cmake --build --preset release-windows-x64 --parallel
 ctest --preset release-windows-x64
-cpack --preset release-windows-x64
+./packaging/windows/package.ps1 build/release-windows-x64 dist
 ```
 
 On macOS:
 
 ```sh
+python3 -m venv build/packaging-tools
+build/packaging-tools/bin/python -m pip install --require-hashes --only-binary=:all: -r packaging/macos/requirements.txt
+source build/packaging-tools/bin/activate
 cmake --preset release-macos-arm64 --fresh -G Ninja
 cmake --build --preset release-macos-arm64 --parallel
 ctest --preset release-macos-arm64
 bash packaging/macos/package.sh build/release-macos-arm64 dist
 ```
 
-On Linux:
+On Linux, install Flatpak, then run:
 
 ```sh
-cmake --preset release-linux-x86_64 --fresh -G Ninja
-cmake --build --preset release-linux-x86_64 --parallel
-ctest --preset release-linux-x86_64
-cpack --preset release-linux-x86_64
+bash packaging/linux/build-flatpak.sh dist
 ```
 
-The Linux AppImage also needs the x86_64 linuxdeploy build named
-`1-alpha-20251107-1`. Its SHA-256 value is
-`c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d`.
-The GitHub workflow downloads and checks this exact file.
+The script installs the Freedesktop 25.08 runtime and SDK from Flathub for your
+account. It builds and tests the app inside that SDK, then creates the Flatpak
+installer. Set `ROGUE_RELEASE_TAG` to build a named release; leave it unset for
+a development build. The installed app has network access for mGBA and
+multiplayer, and graphics access for its window. It has no general access to
+the user's home folder.
 
 All release presets treat project warnings as errors. The macOS preset targets
 macOS 11 and builds only arm64. Check the result with:

@@ -200,21 +200,5 @@
         "outputOnFailure": true
       }
     }
-  ],
-  "packagePresets": [
-    {
-      "name": "release-windows-x64",
-      "configurePreset": "release-windows-x64",
-      "generators": [
-        "ZIP"
-      ]
-    },
-    {
-      "name": "release-linux-x86_64",
-      "configurePreset": "release-linux-x86_64",
-      "generators": [
-        "TGZ"
-      ]
-    }
   ]
 }

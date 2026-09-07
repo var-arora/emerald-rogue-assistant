@@ -8,8 +8,9 @@ foreach(required_variable IN ITEMS
 endforeach()
 
 if(ROGUE_INSTALL_PLATFORM STREQUAL "windows")
-  set(executable ${ROGUE_INSTALL_ROOT}/bin/RogueAssistant.exe)
-  set(resource_directory ${ROGUE_INSTALL_ROOT}/bin/resources)
+  set(executable ${ROGUE_INSTALL_ROOT}/RogueAssistant.exe)
+  set(resource_directory ${ROGUE_INSTALL_ROOT}/resources)
+  set(document_directory ${ROGUE_INSTALL_ROOT}/Documentation)
 elseif(ROGUE_INSTALL_PLATFORM STREQUAL "macos")
   set(executable ${ROGUE_INSTALL_ROOT}/RogueAssistant.app/Contents/MacOS/RogueAssistant)
   set(resource_directory ${ROGUE_INSTALL_ROOT}/RogueAssistant.app/Contents/Resources)
@@ -49,16 +50,7 @@ set(
   ${resource_directory}/poketch_frame.png
   ${resource_directory}/pokemon-emerald-pro.ttf
   ${resource_directory}/RogueAssistant_mGBA.lua
-  ${document_directory}/README.md
   ${document_directory}/THIRD_PARTY_NOTICES.md
-  ${document_directory}/docs/architecture.md
-  ${document_directory}/docs/bridge-protocol.md
-  ${document_directory}/docs/development.md
-  ${document_directory}/docs/home-box-format.md
-  ${document_directory}/docs/installation.md
-  ${document_directory}/docs/multiplayer-protocol.md
-  ${document_directory}/docs/release.md
-  ${document_directory}/docs/troubleshooting.md
   ${document_directory}/licenses/SFML.txt
   ${document_directory}/licenses/ENet.txt
   ${document_directory}/licenses/FreeType.txt
@@ -69,6 +61,7 @@ if(ROGUE_INSTALL_PLATFORM STREQUAL "linux")
   list(
     APPEND
     required_files
+    ${ROGUE_INSTALL_ROOT}/share/metainfo/assistant.emerald.rogue.metainfo.xml
     ${ROGUE_INSTALL_ROOT}/share/applications/assistant.emerald.rogue.desktop
     ${ROGUE_INSTALL_ROOT}/share/icons/hicolor/128x128/apps/assistant.emerald.rogue.png
   )
@@ -79,24 +72,7 @@ foreach(required_file IN LISTS required_files)
   endif()
 endforeach()
 
-verify_directory_inventory(
-  "${document_directory}"
-  README.md
-  THIRD_PARTY_NOTICES.md
-  docs
-  licenses
-)
-verify_directory_inventory(
-  "${document_directory}/docs"
-  architecture.md
-  bridge-protocol.md
-  development.md
-  home-box-format.md
-  installation.md
-  multiplayer-protocol.md
-  release.md
-  troubleshooting.md
-)
+verify_directory_inventory("${document_directory}" THIRD_PARTY_NOTICES.md licenses)
 verify_directory_inventory(
   "${document_directory}/licenses"
   ENet.txt
