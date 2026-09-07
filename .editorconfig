@@ -10,6 +10,6 @@ trim_trailing_whitespace = true
 indent_style = tab
 indent_size = 4
 
-[*.{cmake,json,md,yml,yaml,lua}]
+[{CMakeLists.txt,*.cmake,*.json,*.md,*.yml,*.yaml,*.lua}]
 indent_style = space
 indent_size = 2
