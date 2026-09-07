@@ -1,484 +1,385 @@
-#include "Behaviours/CommonBehaviour.h"
 #include "Behaviours/HomeBoxBehaviour.h"
-#include "DataStream.h"
+
+#include "Endian.h"
 #include "GameConnection.h"
 #include "GameData.h"
 #include "Log.h"
 #include "UserData.h"
 
-void HomeBoxBehaviour::OnAttach(GameConnection& game)
+#include <algorithm>
+#include <chrono>
+#include <cstring>
+#include <span>
+#include <string>
+#include <utility>
+
+void HomeBoxBehaviour::OnAttach(GameConnection&)
 {
 	m_State = State::First;
+	m_Dimensions = {};
+	m_LocalBoxCount = 0;
+	m_LocalActiveBoxIndices.clear();
+	m_RemoteActiveBoxIndices.clear();
 	m_ActiveBoxData.clear();
+	m_StoredBoxData.clear();
+	m_BoxWriteRequests = {};
+	m_WaitingForBoxWrite = false;
+	m_InitialiseBoxWriteIndex = 0;
+	m_WriteFilePath.clear();
+	m_HasPendingFileWrite = false;
+	m_RequiresReopen = false;
+	m_NextSaveAttempt = {};
 }
 
 void HomeBoxBehaviour::OnDetach(GameConnection& game)
 {
-	m_BoxWriteRequest = std::queue<BoxWriteRequest>(); // make sure we finish writing any pending writes
-	HandlePendingFileWrite(game);
+	// The last result can arrive just before disconnect, before OnUpdate removes
+	// the completed box. Only completed writes may change the saved box order.
+	while (!m_WaitingForBoxWrite && !m_BoxWriteRequests.empty() && m_BoxWriteRequests.front().bytesRemaining == 0)
+		m_BoxWriteRequests.pop();
+	if (!m_BoxWriteRequests.empty())
+	{
+		LOG_WARN("Home Box transfer interrupted; kept the last saved storage file and backup");
+		game.ReportError("Storage transfer stopped.\nHome Box file was not changed.");
+		m_BoxWriteRequests = {};
+		m_HasPendingFileWrite = false;
+		return;
+	}
+	HandlePendingFileWrite(game, true);
+}
+
+bool HomeBoxBehaviour::ValidateLayout(GameConnection const& game, std::string& error) const
+{
+	auto const& memory = game.GetObservedGameMemory();
+	auto const& header = memory.GetRogueHeader();
+	if (header.homeBoxSize != memory.GetHomeBoxStateBlobSize())
+	{
+		error = "Home Box header size does not match the observed state";
+		return false;
+	}
+
+	rogue::storage::HomeBoxLayout const layout{
+		header.homeBoxSize,			 header.homeLocalBoxCount,			header.homeTotalBoxCount,
+		header.homeMinimalBoxOffset, header.homeMinimalBoxSize,			header.homeDestMonOffset,
+		header.homeDestMonSize,		 header.homeRemoteIndexOrderOffset, header.homeTrainerIdOffset,
+	};
+	return rogue::storage::ValidateHomeBoxLayout(layout, error);
+}
+
+bool HomeBoxBehaviour::ValidateIndexOrder(std::vector<std::uint8_t> const& indices) const
+{
+	if (indices.size() != m_Dimensions.remoteBoxCount + m_LocalBoxCount)
+		return false;
+	std::vector<bool> seen(indices.size(), false);
+	for (std::uint8_t index : indices)
+	{
+		if (index >= seen.size() || seen[index])
+			return false;
+		seen[index] = true;
+	}
+	return true;
+}
+
+void HomeBoxBehaviour::LoadOfflineData(GameConnection& game, std::uint32_t trainerId)
+{
+	auto const& header = game.GetObservedGameMemory().GetRogueHeader();
+	m_LocalBoxCount = header.homeLocalBoxCount;
+	m_Dimensions = {
+		header.rogueAssistantCompatVersion,
+		header.rogueVersion,
+		trainerId,
+		header.homeTotalBoxCount - header.homeLocalBoxCount,
+		header.homeMinimalBoxSize,
+		header.homeDestMonSize,
+	};
+	m_WriteFilePath = UserData::GetDataDirectory() / std::to_string(m_Dimensions.edition) /
+					  std::to_string(m_Dimensions.trainerId) / "boxes.dat";
+
+	m_StoredBoxData.assign(m_Dimensions.remoteBoxCount,
+						   BoxData{std::vector<std::uint8_t>(m_Dimensions.metadataSize, 0),
+								   std::vector<std::uint8_t>(m_Dimensions.pokemonDataSize, 0)});
+	auto const loaded = rogue::storage::LoadHomeBoxFile(m_WriteFilePath, m_Dimensions);
+	if (loaded.Succeeded())
+	{
+		for (auto const& record : loaded.data->records)
+		{
+			m_StoredBoxData[record.remoteBoxIndex] = BoxData{record.metadata, record.pokemonData};
+		}
+		LOG_INFO("Loaded Home Box data from %s",
+				 loaded.source == rogue::storage::HomeBoxLoadSource::Primary ? "primary" : "backup");
+	}
+	else if (!loaded.NotFound())
+	{
+		LOG_ERROR("Home Box load failed: %s", loaded.error.c_str());
+		game.ReportError("Cannot load Home Box.\nBack up its files before recovery.");
+		game.Disconnect();
+		return;
+	}
+
+	if (!loaded.warning.empty())
+	{
+		LOG_WARN("Home Box load warning: %s", loaded.warning.c_str());
+		if (loaded.primaryInvalid)
+		{
+			// Saving will not replace a damaged main file. Do not enable transfers
+			// that could remove Pokémon from the game without saving them to disk.
+			game.ReportError("Home Box needs recovery.\nBack up its files before continuing.");
+			game.Disconnect();
+			return;
+		}
+		else
+			game.ReportError("Loaded Home Box with a warning.\nSee RogueAssistant.log for details.");
+	}
+
+	m_ActiveBoxData.clear();
+	m_ActiveBoxData.reserve(m_LocalBoxCount + m_Dimensions.remoteBoxCount);
+	m_InitialiseBoxWriteIndex = m_LocalBoxCount;
+	m_State = State::InitialiseBoxData;
 }
 
 void HomeBoxBehaviour::OnUpdate(GameConnection& game)
 {
+	if (!game.GetObservedGameMemory().IsHomeBoxStateValid())
+		return;
+
+	std::string layoutError;
+	if (!ValidateLayout(game, layoutError))
+	{
+		LOG_ERROR("%s", layoutError.c_str());
+		game.ReportError("Cannot use Home Box.\nThe ROM layout is invalid.");
+		game.Disconnect();
+		return;
+	}
+	if (m_RequiresReopen)
+		return;
+
 	HandlePendingFileWrite(game);
+	auto const& header = game.GetObservedGameMemory().GetRogueHeader();
+	std::uint8_t const* homeBoxState = game.GetObservedGameMemory().GetHomeBoxStateBlob();
+	GameAddress const writeAddress = game.GetObservedGameMemory().GetHomeBoxStatePtr();
 
-	if (game.GetObservedGameMemory().IsHomeBoxStateValid())
+	switch (m_State)
 	{
-		GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
-		u8 const* homeBoxState = game.GetObservedGameMemory().GetHomeBoxStateBlob();
-		GameAddress writeAddress = game.GetObservedGameMemory().GetHomeBoxStatePtr();
-
-		switch (m_State)
+	case State::OpenOfflineFile: {
+		// The ROM initializes the final order entry to 255 when Extended Storage
+		// opens. A different value before this behaviour has written anything
+		// means another assistant session already set up this screen. After a
+		// disconnect, the game stays disconnected until the player leaves this
+		// screen and opens it again. Do not change storage before that happens.
+		if (homeBoxState[header.homeRemoteIndexOrderOffset + header.homeTotalBoxCount - 1] != 255)
 		{
-		case HomeBoxBehaviour::State::OpenOfflineFile:
+			LOG_WARN("Extended Storage was already initialized when this assistant session connected");
+			m_RequiresReopen = true;
+			return;
+		}
+
+		std::uint32_t trainerId = 0;
+		std::span<std::uint8_t const> const state(homeBoxState, game.GetObservedGameMemory().GetHomeBoxStateBlobSize());
+		if (!rogue::endian::ReadLittle(state, header.homeTrainerIdOffset, trainerId))
 		{
-			u32 trainerId = *((u32*)&homeBoxState[rogueHeader.homeTrainerIdOffset]);
+			LOG_ERROR("Home Box trainer ID is outside the observed state");
+			game.ReportError("Cannot use Home Box.\nThe trainer data is invalid.");
+			game.Disconnect();
+			return;
+		}
+		LoadOfflineData(game, trainerId);
+		break;
+	}
 
-			std::wstring filePath = std::to_wstring(rogueHeader.rogueVersion) + L"/" + std::to_wstring(trainerId) + L"/boxes.dat";
-
-			// Set defaults
-			m_StoredBoxData.resize(0);
-			m_HasPendingFileWrite = false;
-			//m_HasPendingFileWrite = true;
-
-			if (UserData::DoesFileExist(filePath))
+	case State::InitialiseBoxData:
+		if (m_ActiveBoxData.size() < m_LocalBoxCount)
+		{
+			if (game.GetObservedGameMemory().RequestPokemonStorageData(
+					static_cast<std::uint32_t>(m_ActiveBoxData.size())))
 			{
-				std::fstream fileStream;
-
-				if (UserData::TryOpenReadFile(filePath, fileStream) && LoadDataFromFile(game, fileStream))
-				{
-					// successfully parsed existing data
-					//m_HasPendingFileWrite = false;
-				}
-				else
-				{
-					// Failed, so reset
-					//m_StoredBoxData.resize(0);
-					//m_HasPendingFileWrite = true;
-				}
+				m_ActiveBoxData.emplace_back();
+				m_State = State::WaitingForBoxData;
 			}
+			break;
+		}
 
-			// Open the file for us to write to now so we can hold onto it during this interaction
-			m_WriteFilePath = filePath;
-			//m_HasPendingFileWrite = true;
+		for (BoxData const& stored : m_StoredBoxData)
+			m_ActiveBoxData.push_back(stored);
+		if (m_ActiveBoxData.size() != header.homeTotalBoxCount)
+		{
+			game.ReportError("Cannot use Home Box.\nThe number of boxes changed.");
+			game.Disconnect();
+			return;
+		}
+		m_State = State::SendGameDataInit;
+		break;
 
-			m_State = HomeBoxBehaviour::State::InitialiseBoxData;
+	case State::WaitingForBoxData:
+		if (game.GetObservedGameMemory().IsPokemonStorageBlobReady())
+		{
+			InitialiseLocalBoxData(game, static_cast<std::uint32_t>(m_ActiveBoxData.size() - 1));
+			m_State = State::InitialiseBoxData;
 		}
 		break;
 
-		case HomeBoxBehaviour::State::InitialiseBoxData:
+	case State::SendGameDataInit:
+		if (m_InitialiseBoxWriteIndex < header.homeTotalBoxCount)
 		{
-			if (m_StoredBoxData.empty())
+			if (!WriteMinimalBox(game, m_InitialiseBoxWriteIndex,
+							 m_ActiveBoxData[m_InitialiseBoxWriteIndex].minimalData.data()))
 			{
-				// Load data
-				m_StoredBoxData.resize(rogueHeader.homeTotalBoxCount - rogueHeader.homeLocalBoxCount);
-
-				// Fill with nothing
-				for (size_t i = 0; i < m_StoredBoxData.size(); ++i)
-				{
-					// We expect the game to handle the default state, so just fill with 0's here for simplicity
-					m_StoredBoxData[i].m_MinimalData.resize(rogueHeader.homeMinimalBoxSize, 0);
-					m_StoredBoxData[i].m_MonData.resize(rogueHeader.homeDestMonSize, 0);
-				}
 				break;
 			}
-
-			if (m_ActiveBoxData.size() != rogueHeader.homeLocalBoxCount)
-			{
-				// Need to keep requesting boxes
-				if (game.GetObservedGameMemory().RequestPokemonStorageData((u32)m_ActiveBoxData.size()))
-				{
-					m_ActiveBoxData.emplace_back();
-					m_State = HomeBoxBehaviour::State::WaitingForBoxData;
-				}
-			}
-			else
-			{
-				// We're done gathering data from client, so now fill in the local stored data too!
-				// 
-				for (size_t i = 0; i < m_StoredBoxData.size(); ++i)
-				{
-					m_ActiveBoxData.emplace_back();
-
-					// TEMP
-					m_ActiveBoxData.back().m_MinimalData = m_StoredBoxData[i].m_MinimalData;
-					m_ActiveBoxData.back().m_MonData = m_StoredBoxData[i].m_MonData;
-				}
-
-				ASSERT_MSG(m_ActiveBoxData.size() == rogueHeader.homeTotalBoxCount, "Unexpected Active Box Count");
-
-				m_State = HomeBoxBehaviour::State::SendGameDataInit;
-			}
-		}
-		break;
-
-		case HomeBoxBehaviour::State::WaitingForBoxData:
-		{
-			if (game.GetObservedGameMemory().IsPokemonStorageBlobReady())
-			{
-				// Initialise and then loop
-				InitaliseLocalBoxData(game, (u32)m_ActiveBoxData.size() - 1);
-				m_State = HomeBoxBehaviour::State::InitialiseBoxData;
-			}
-		}
-		break;
-
-		case HomeBoxBehaviour::State::SendGameDataInit:
-		{
-			// Send the current stored boxe states
-			for (u32 boxId = rogueHeader.homeLocalBoxCount; boxId < rogueHeader.homeTotalBoxCount; ++boxId)
-			{
-				WriteMinimalBox(game, boxId, m_ActiveBoxData[boxId].m_MinimalData.data());
-			}
-
-			// Reset index orders
-			{
-				m_LocalActiveBoxIndices.clear();
-				m_RemoteActiveBoxIndices.clear();
-				for (u32 i = 0; i < rogueHeader.homeTotalBoxCount; ++i)
-				{
-					m_LocalActiveBoxIndices.push_back(static_cast<u8>(i));
-					m_RemoteActiveBoxIndices.push_back(static_cast<u8>(i));
-				}
-
-				for (u32 i = 0; i < rogueHeader.homeLocalBoxCount; ++i)
-				{
-					m_LocalActiveBoxIndices.push_back(static_cast<u8>(i));
-				}
-
-				game.WriteRequest(CreateAnonymousMessageId(), writeAddress + rogueHeader.homeRemoteIndexOrderOffset, m_RemoteActiveBoxIndices.data(), rogueHeader.homeTotalBoxCount);
-			}
-
-			m_State = HomeBoxBehaviour::State::WaitForInit;
-		}
-		break;
-
-		case HomeBoxBehaviour::State::WaitForInit:
-		{
-			// Wait for write to go through to game
-			if (homeBoxState[rogueHeader.homeRemoteIndexOrderOffset + rogueHeader.homeTotalBoxCount - 1] != 255)
-			{
-				m_State = HomeBoxBehaviour::State::Update;
-			}
-		}
-		break;
-
-		case HomeBoxBehaviour::State::Update:
-		{
-			// Only update the active write
-			if (PumpWriteMonBox(game))
+			++m_InitialiseBoxWriteIndex;
+			if (m_InitialiseBoxWriteIndex < header.homeTotalBoxCount)
 				break;
+		}
 
-			// Copy the indices here (So we can save the data once we're done)
-			memcpy(m_RemoteActiveBoxIndices.data(), &homeBoxState[rogueHeader.homeRemoteIndexOrderOffset], rogueHeader.homeTotalBoxCount);
-			
-			// Process any boxes which have been swapped
-			for (u32 i = 0; i < rogueHeader.homeTotalBoxCount; ++i)
+		m_LocalActiveBoxIndices.resize(header.homeTotalBoxCount);
+		m_RemoteActiveBoxIndices.resize(header.homeTotalBoxCount);
+		for (std::uint32_t index = 0; index < header.homeTotalBoxCount; ++index)
+		{
+			m_LocalActiveBoxIndices[index] = static_cast<std::uint8_t>(index);
+			m_RemoteActiveBoxIndices[index] = static_cast<std::uint8_t>(index);
+		}
+		if (!game.WriteRequest(CreateAnonymousMessageId(), writeAddress + header.homeRemoteIndexOrderOffset,
+						   m_RemoteActiveBoxIndices.data(), m_RemoteActiveBoxIndices.size()))
+		{
+			break;
+		}
+		m_State = State::WaitForInit;
+		break;
+
+	case State::WaitForInit:
+		if (homeBoxState[header.homeRemoteIndexOrderOffset + header.homeTotalBoxCount - 1] != 255)
+			m_State = State::Update;
+		break;
+
+	case State::Update:
+		if (PumpWriteMonBox(game))
+			break;
+
+		std::memcpy(m_RemoteActiveBoxIndices.data(), homeBoxState + header.homeRemoteIndexOrderOffset,
+					m_RemoteActiveBoxIndices.size());
+		if (!ValidateIndexOrder(m_RemoteActiveBoxIndices))
+		{
+			game.ReportError("Cannot use Home Box.\nThe box order is invalid.");
+			game.Disconnect();
+			return;
+		}
+
+		for (std::uint32_t index = 0; index < header.homeTotalBoxCount; ++index)
+		{
+			if (m_RemoteActiveBoxIndices[index] == m_LocalActiveBoxIndices[index])
+				continue;
+			if (index < header.homeLocalBoxCount)
 			{
-				if (m_RemoteActiveBoxIndices[i] != m_LocalActiveBoxIndices[i])
-				{
-					// Send over any pokemon box contents for boxes which differ
-					if(i < rogueHeader.homeLocalBoxCount)
-						BeginWriteMonBox(game, i, m_ActiveBoxData[m_RemoteActiveBoxIndices[i]].m_MonData.data());
-
-					m_LocalActiveBoxIndices[i] = m_RemoteActiveBoxIndices[i];
-					m_HasPendingFileWrite = true;
-				}
+				BeginWriteMonBox(game, index, m_ActiveBoxData[m_RemoteActiveBoxIndices[index]].pokemonData.data());
 			}
+			m_LocalActiveBoxIndices[index] = m_RemoteActiveBoxIndices[index];
+			m_HasPendingFileWrite = true;
 		}
 		break;
-		}
 	}
 }
 
-void HomeBoxBehaviour::InitaliseLocalBoxData(GameConnection& game, u32 boxId)
+void HomeBoxBehaviour::InitialiseLocalBoxData(GameConnection& game, std::uint32_t boxId)
 {
-	GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
-	u8 const* homeBoxState = game.GetObservedGameMemory().GetHomeBoxStateBlob();
-	
-	BoxData& targetBox = m_ActiveBoxData[boxId];
-
-	if (boxId < rogueHeader.homeLocalBoxCount)
-	{
-		// Copy minimal data
-		targetBox.m_MinimalData.resize(rogueHeader.homeMinimalBoxSize);
-		memcpy(targetBox.m_MinimalData.data(), GetMinimalBoxPtr(game, boxId), rogueHeader.homeMinimalBoxSize);
-
-		// Copy the actual box mons we have just gathered
-		targetBox.m_MonData.resize(rogueHeader.homeDestMonSize);
-		memcpy(targetBox.m_MonData.data(), game.GetObservedGameMemory().GetPokemonStorageBlob(), rogueHeader.homeDestMonSize);
-	}
-	else
-	{
-		// Load data from disk
-		// TODO
-	}
+	auto const& header = game.GetObservedGameMemory().GetRogueHeader();
+	BoxData& target = m_ActiveBoxData[boxId];
+	std::uint8_t const* const minimalBox = GetMinimalBoxPtr(game, boxId);
+	target.minimalData.assign(minimalBox, minimalBox + header.homeMinimalBoxSize);
+	target.pokemonData.assign(game.GetObservedGameMemory().GetPokemonStorageBlob(),
+							  game.GetObservedGameMemory().GetPokemonStorageBlob() + header.homeDestMonSize);
 }
 
-void HomeBoxBehaviour::WriteMinimalBox(GameConnection& game, u32 boxId, u8 const* data)
+bool HomeBoxBehaviour::WriteMinimalBox(GameConnection& game, std::uint32_t boxId, std::uint8_t const* data)
 {
-	GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
-	GameAddress writeAddress = game.GetObservedGameMemory().GetHomeBoxStatePtr();
-
-	game.WriteRequest(
-		CreateAnonymousMessageId(),
-		writeAddress + rogueHeader.homeMinimalBoxOffset + rogueHeader.homeMinimalBoxSize * boxId,
-		data,
-		rogueHeader.homeMinimalBoxSize
-	);
+	auto const& header = game.GetObservedGameMemory().GetRogueHeader();
+	GameAddress const writeAddress = game.GetObservedGameMemory().GetHomeBoxStatePtr();
+	return game.WriteRequest(CreateAnonymousMessageId(),
+						 writeAddress + header.homeMinimalBoxOffset + header.homeMinimalBoxSize * boxId, data,
+						 header.homeMinimalBoxSize);
 }
 
-u8 const* HomeBoxBehaviour::GetMinimalBoxPtr(GameConnection& game, u32 boxId)
+std::uint8_t const* HomeBoxBehaviour::GetMinimalBoxPtr(GameConnection& game, std::uint32_t boxId)
 {
-	GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
-	u8 const* homeBoxState = game.GetObservedGameMemory().GetHomeBoxStateBlob();
-
-	return &homeBoxState[rogueHeader.homeMinimalBoxOffset + rogueHeader.homeMinimalBoxSize * boxId];
+	auto const& header = game.GetObservedGameMemory().GetRogueHeader();
+	return game.GetObservedGameMemory().GetHomeBoxStateBlob() + header.homeMinimalBoxOffset +
+		   header.homeMinimalBoxSize * boxId;
 }
 
-void HomeBoxBehaviour::BeginWriteMonBox(GameConnection& game, u32 boxId, u8 const* data)
+void HomeBoxBehaviour::BeginWriteMonBox(GameConnection& game, std::uint32_t boxId, std::uint8_t const* data)
 {
-	GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
-
-	BoxWriteRequest boxWriteRequest;
-	boxWriteRequest.m_BoxId = boxId;
-	boxWriteRequest.m_Data = data;
-
-	boxWriteRequest.m_Offset = 0;
-	boxWriteRequest.m_BytesRemaining = rogueHeader.homeDestMonSize;
-
-	m_BoxWriteRequest.push(std::move(boxWriteRequest));
+	auto const& header = game.GetObservedGameMemory().GetRogueHeader();
+	m_BoxWriteRequests.push(BoxWriteRequest{boxId, data, 0, header.homeDestMonSize});
 }
 
 bool HomeBoxBehaviour::PumpWriteMonBox(GameConnection& game)
 {
-	if (m_BoxWriteRequest.size() != 0)
+	if (m_BoxWriteRequests.empty())
+		return false;
+	if (m_WaitingForBoxWrite)
+		return true;
+
+	BoxWriteRequest& request = m_BoxWriteRequests.front();
+	if (request.bytesRemaining == 0)
 	{
-		BoxWriteRequest& boxWriteRequest = m_BoxWriteRequest.front();
-
-		GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
-		GameAddress writeAddress = game.GetObservedGameMemory().GetPokemonStoragePtr();
-
-		// Send in parts
-		if (boxWriteRequest.m_BytesRemaining != 0)
-		{
-			size_t writeSize = std::min<size_t>(boxWriteRequest.m_BytesRemaining, 1024);
-
-			game.WriteRequest(
-				CreateAnonymousMessageId(),
-				writeAddress + rogueHeader.homeDestMonSize * boxWriteRequest.m_BoxId + boxWriteRequest.m_Offset,
-				boxWriteRequest.m_Data + boxWriteRequest.m_Offset,
-				writeSize
-			);
-
-			boxWriteRequest.m_BytesRemaining -= writeSize;
-			boxWriteRequest.m_Offset += writeSize;
-			return true;
-		}
-		else
-		{
-			m_BoxWriteRequest.pop();
-			return true;
-		}
-	}
-
-	return false;
-}
-
-u8 const* HomeBoxBehaviour::GetMonBoxPtr(GameConnection& game, u32 boxId)
-{
-	GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
-	u8 const* homeBoxState = game.GetObservedGameMemory().GetHomeBoxStateBlob();
-
-	return &homeBoxState[rogueHeader.homeDestMonOffset + rogueHeader.homeDestMonSize * boxId];
-}
-
-#define MAGIC_NUMBER_HEADER 3497814
-#define MAGIC_NUMBER_FOOTER 7893612
-
-void HomeBoxBehaviour::HandlePendingFileWrite(GameConnection& game)
-{
-	GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
-
-	if (m_WriteFilePath.empty())
-		return;
-
-	if (m_ActiveBoxData.empty() || m_LocalActiveBoxIndices.empty())
-		return;
-
-	if (!m_BoxWriteRequest.empty())
-		return;
-
-	std::fstream fileStream;
-	if (m_HasPendingFileWrite && UserData::TryOpenWriteFile(m_WriteFilePath, fileStream))
-	{
-		m_HasPendingFileWrite = false;
-
-		LOG_INFO("Attempting to save Box Data...");
-
-		DataStream stream;
-		if (SerializeSavedData(game, stream))
-		{
-			fileStream.write(reinterpret_cast<char*>(stream.GetData()), stream.GetSize());
-			fileStream.close();
-			LOG_INFO("Saved.");
-		}
-		else
-		{
-			LOG_INFO("Failed to save.");
-		}
-	}
-}
-
-bool HomeBoxBehaviour::LoadDataFromFile(GameConnection& game, std::fstream& fileStream)
-{
-	m_StoredBoxData.resize(0);
-
-	LOG_INFO("Attempting to load Box Data...");
-
-	DataStream stream(fileStream);
-	if (SerializeSavedData(game, stream))
-	{
-		LOG_INFO("Loaded.");
+		m_BoxWriteRequests.pop();
 		return true;
 	}
-	else
+	auto const& header = game.GetObservedGameMemory().GetRogueHeader();
+	GameAddress const writeAddress = game.GetObservedGameMemory().GetPokemonStoragePtr();
+	std::size_t const writeSize = std::min<std::size_t>(request.bytesRemaining, 1024);
+	std::weak_ptr<HomeBoxBehaviour> const weakSelf =
+		std::static_pointer_cast<HomeBoxBehaviour>(shared_from_this());
+	m_WaitingForBoxWrite = true;
+	if (!game.WriteRequest(CreateAnonymousMessageId(),
+					   writeAddress + header.homeDestMonSize * request.boxId + static_cast<GameAddress>(request.offset),
+					   request.data + request.offset, writeSize, [weakSelf] {
+						   if (auto self = weakSelf.lock())
+							   self->m_WaitingForBoxWrite = false;
+					   }))
 	{
-		LOG_INFO("Failed to load.");
-		return false;
+		m_WaitingForBoxWrite = false;
+		return true;
 	}
-}
-
-bool HomeBoxBehaviour::SerializeSavedData(GameConnection& game, DataStream& stream)
-{
-	GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
-
-	u32 magicNumber = MAGIC_NUMBER_HEADER;
-	u32 version = 0; // todo
-	u32 boxCount = (rogueHeader.homeTotalBoxCount - rogueHeader.homeLocalBoxCount);
-	u32 minimalSize = rogueHeader.homeMinimalBoxSize;
-	u32 pokemonSize = rogueHeader.homeDestMonSize;
-
-	stream.Serialize(magicNumber);
-	stream.Serialize(version);
-	stream.Serialize(boxCount);
-	stream.Serialize(minimalSize);
-	stream.Serialize(pokemonSize);
-
-	if (magicNumber != MAGIC_NUMBER_HEADER)
-	{
-		LOG_ERROR("Failed header magic number match");
-		return false;
-	}
-
-	if (version != 0)
-	{
-		LOG_ERROR("Failed version number match");
-		return false;
-	}
-
-	if (minimalSize != rogueHeader.homeMinimalBoxSize)
-	{
-		LOG_ERROR("Failed minimal size match");
-		return false;
-	}
-
-	if (pokemonSize != rogueHeader.homeDestMonSize)
-	{
-		LOG_ERROR("Failed pokemon size match");
-		return false;
-	}
-
-	if (stream.IsWrite())
-	{
-		// For writing, we need to repoint which boxes we're going to write based on the game's reordering
-		for (u32 i = rogueHeader.homeLocalBoxCount; i < rogueHeader.homeTotalBoxCount; ++i)
-		{
-			u32 boxId = m_LocalActiveBoxIndices[i];
-			BoxData& boxData = m_ActiveBoxData[boxId];
-
-			if (!stream.Serialize(boxData.m_MinimalData.data(), minimalSize))
-			{
-				LOG_ERROR("Failed box %i minimal data check", boxId);
-			}
-
-			if (!stream.Serialize(boxData.m_MonData.data(), pokemonSize))
-			{
-				LOG_ERROR("Failed box %i pokemon data  check", boxId);
-			}
-
-			u32 checksum = boxData.CalculateCheckSum();
-			stream.Serialize(checksum);
-		}
-	}
-	else
-	{
-		// For reading just popupare the stored box data list and we'll use them later
-		while (m_StoredBoxData.size() < boxCount)
-		{
-			m_StoredBoxData.emplace_back();
-			BoxData& boxData = m_StoredBoxData.back();
-
-			boxData.m_MinimalData.resize(minimalSize, 0);
-			boxData.m_MonData.resize(pokemonSize, 0);
-		}
-
-		for (u32 boxId = 0; boxId < boxCount; ++boxId)
-		{
-			BoxData& boxData = m_StoredBoxData[boxId];
-
-			if (!stream.Serialize(boxData.m_MinimalData.data(), minimalSize))
-			{
-				LOG_ERROR("Failed box %i minimal data check", boxId);
-
-				boxData.m_MinimalData.clear();
-				boxData.m_MinimalData.resize(minimalSize, 0);
-			}
-
-			if (!stream.Serialize(boxData.m_MonData.data(), pokemonSize))
-			{
-				LOG_ERROR("Failed box %i pokemon data check", boxId);
-
-				boxData.m_MonData.clear();
-				boxData.m_MonData.resize(pokemonSize, 0);
-			}
-
-			u32 checksum;
-			stream.Serialize(checksum);
-
-			if (checksum != boxData.CalculateCheckSum())
-			{
-				LOG_ERROR("Failed box %i data checksum", boxId);
-
-				boxData.m_MinimalData.clear();
-				boxData.m_MinimalData.resize(minimalSize, 0);
-				boxData.m_MonData.clear();
-				boxData.m_MonData.resize(pokemonSize, 0);
-			}
-		}
-	}
-
-	magicNumber = MAGIC_NUMBER_FOOTER;
-	stream.Serialize(magicNumber);
-
-	if (magicNumber != MAGIC_NUMBER_FOOTER)
-	{
-		LOG_ERROR("Failed footer magic number check");
-		return false;
-	}
-
+	request.bytesRemaining -= writeSize;
+	request.offset += writeSize;
 	return true;
 }
 
-u32 HomeBoxBehaviour::BoxData::CalculateCheckSum() const
+void HomeBoxBehaviour::HandlePendingFileWrite(GameConnection& game, bool force)
 {
-	u32 output = 0;
+	if (!m_HasPendingFileWrite || m_WriteFilePath.empty() || m_ActiveBoxData.empty() ||
+		m_LocalActiveBoxIndices.empty() || !m_BoxWriteRequests.empty())
+	{
+		return;
+	}
+	if (!force && std::chrono::steady_clock::now() < m_NextSaveAttempt)
+		return;
 
-	for (size_t i = 0; i < m_MinimalData.size(); ++i)
-		output += m_MinimalData[i];
+	rogue::storage::HomeBoxData data;
+	data.dimensions = m_Dimensions;
+	data.records.reserve(m_Dimensions.remoteBoxCount);
+	for (std::uint32_t remoteIndex = 0; remoteIndex < m_Dimensions.remoteBoxCount; ++remoteIndex)
+	{
+		std::size_t const slot = m_LocalBoxCount + remoteIndex;
+		if (slot >= m_LocalActiveBoxIndices.size() || m_LocalActiveBoxIndices[slot] >= m_ActiveBoxData.size())
+		{
+			game.ReportError("Cannot save Home Box.\nThe box order is invalid.");
+			m_NextSaveAttempt = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			return;
+		}
+		BoxData const& box = m_ActiveBoxData[m_LocalActiveBoxIndices[slot]];
+		data.records.push_back(rogue::storage::HomeBoxRecord{remoteIndex, box.minimalData, box.pokemonData});
+	}
 
-	for (size_t i = 0; i < m_MonData.size(); ++i)
-		output += m_MonData[i];
-
-	return output;
+	std::string error;
+	LOG_INFO("Attempting to save Home Box data");
+	if (!rogue::storage::SaveHomeBoxFile(m_WriteFilePath, data, error))
+	{
+		LOG_ERROR("Home Box save failed: %s", error.c_str());
+		game.ReportError("Could not save Home Box.\nThe main file was not changed.");
+		m_NextSaveAttempt = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		return;
+	}
+	m_HasPendingFileWrite = false;
+	m_NextSaveAttempt = {};
+	LOG_INFO("Saved Home Box data");
 }

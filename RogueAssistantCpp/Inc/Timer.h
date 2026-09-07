@@ -1,7 +1,8 @@
 #pragma once
 #include <chrono>
+#include <cstdint>
 
-typedef long long TimeDurationNS;
+using TimeDurationNS = std::int64_t;
 
 class UpdateTimer
 {

@@ -1,5 +1,7 @@
 ﻿#include "GameData.h"
 
+#include <iterator>
+
 namespace GameHelpers
 {
 	struct CharMapping
@@ -179,11 +181,11 @@ namespace GameHelpers
 		{
 			u8 c = str[i];
 
-			// This is NULL in game strings
+			// The game uses 0xFF as its string terminator.
 			if (c == 0xFF)
 				break;
 
-			for (size_t j = 0; j < ARRAY_COUNT(c_CharMapping); ++j)
+			for (size_t j = 0; j < std::size(c_CharMapping); ++j)
 			{
 				if (c_CharMapping[j].m_CharacterCode == c)
 				{

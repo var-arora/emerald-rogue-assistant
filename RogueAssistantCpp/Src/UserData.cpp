@@ -1,195 +1,214 @@
 #include "UserData.h"
-#include "StringUtils.h"
+
 #include "Log.h"
+#include "Platform/AppPaths.h"
+#include "Platform/Configuration.h"
+#include "Platform/FileSystem.h"
+#include "Platform/Utf8.h"
 
-#include <cstdlib>
-#include <filesystem>
-
-#pragma warning( push )
-#pragma warning( disable : 4244)
+#include <optional>
+#include <utility>
 
 namespace fs = std::filesystem;
 
-std::map<std::string, std::string> UserData::s_SavedValues;
-bool UserData::s_PendingSavedValueChange = false;
-
-static std::wstring GetEnvVar(std::wstring const& var, std::wstring const& defaultVal)
+namespace
 {
-	wchar_t* buf = nullptr;
-	size_t sz = 0;
-	if (_wdupenv_s(&buf, &sz, var.c_str()) == 0 && buf != nullptr)
-	{
-		std::wstring output = buf;
-		free(buf);
-		return output;
-	}
-	return defaultVal;
-}
+	std::optional<rogue::platform::AppPaths> Paths;
+	rogue::platform::Settings SavedSettings;
+	bool PendingSettingsChange = false;
+	bool CanWriteSettings = true;
 
-static std::wstring FormatPath(std::wstring const& path)
-{
-	std::wstring output;
-
-	if (path.find_first_of(':') == std::wstring::npos)
+	fs::path ResolveDataPath(std::wstring const& path)
 	{
-		// Relative path
-		fs::path p = GetEnvVar(L"appdata", L"save") + L"/.pokabbie/rogue_assistant/" + path;
-		p = std::filesystem::absolute(p);
-		output = p;
-	}
-	else
-	{
-		// Already absolute path
-		output = path;
+		fs::path resolved(path);
+		if (resolved.is_absolute())
+			return resolved.lexically_normal();
+		if (!Paths)
+			return resolved.lexically_normal();
+		return (Paths->dataDirectory / resolved).lexically_normal();
 	}
 
-	strutil::replace_all(output, L"/", L"\\");
-	strutil::replace_all(output, L"\\\\", L"\\"); // remove any double slashes
-	return output;
+	bool EnsureParentDirectory(fs::path const& path)
+	{
+		std::string error;
+		if (rogue::platform::EnsureDirectory(path.parent_path(), error))
+			return true;
+		LOG_ERROR("Cannot prepare %s: %s", rogue::platform::PathToUtf8(path).c_str(), error.c_str());
+		return false;
+	}
 }
 
 bool UserData::DoesDirectoryExist(std::wstring const& path)
 {
-	fs::file_status status = fs::status(FormatPath(path));
-	return fs::is_directory(status);
+	std::error_code ec;
+	return fs::is_directory(ResolveDataPath(path), ec);
 }
 
-bool UserData::DoesFileExist(std::wstring const& path) 
+bool UserData::DoesFileExist(std::wstring const& path)
 {
-	fs::file_status status = fs::status(FormatPath(path));
-	return fs::is_regular_file(status);
+	std::error_code ec;
+	return fs::is_regular_file(ResolveDataPath(path), ec);
 }
 
-static void EnsureParentDirectoriesExist(std::wstring const& path)
+bool UserData::TryOpenReadFile(std::wstring const& path, std::fstream& outStream)
 {
-	std::wstring directoryPath = FormatPath(path);
-	directoryPath = directoryPath.substr(0, directoryPath.find_last_of('\\'));
+	fs::path const resolved = ResolveDataPath(path);
+	std::error_code ec;
+	if (!fs::is_regular_file(resolved, ec))
+		return false;
 
-	if (!UserData::DoesDirectoryExist(directoryPath))
+	LOG_INFO("UserData::OpenRead %s", rogue::platform::PathToUtf8(resolved).c_str());
+	outStream.close();
+	outStream.open(resolved, std::ios::binary | std::ios::in);
+	return outStream.is_open();
+}
+
+bool UserData::TryOpenWriteFile(std::wstring const& path, std::fstream& outStream, bool createIfMissing)
+{
+	fs::path const resolved = ResolveDataPath(path);
+	std::error_code ec;
+	if (!createIfMissing && !fs::is_regular_file(resolved, ec))
+		return false;
+	if (!EnsureParentDirectory(resolved))
+		return false;
+
+	LOG_INFO("UserData::OpenWrite %s", rogue::platform::PathToUtf8(resolved).c_str());
+	outStream.close();
+	outStream.open(resolved, std::ios::binary | std::ios::out | std::ios::trunc);
+	return outStream.is_open();
+}
+
+bool UserData::TryOpenAppendFile(std::wstring const& path, std::fstream& outStream, bool createIfMissing)
+{
+	fs::path const resolved = ResolveDataPath(path);
+	std::error_code ec;
+	if (!createIfMissing && !fs::is_regular_file(resolved, ec))
+		return false;
+	if (!EnsureParentDirectory(resolved))
+		return false;
+
+	LOG_INFO("UserData::OpenAppend %s", rogue::platform::PathToUtf8(resolved).c_str());
+	outStream.close();
+	outStream.open(resolved, std::ios::binary | std::ios::out | std::ios::app);
+	return outStream.is_open();
+}
+
+bool UserData::Init()
+{
+	std::string error;
+	Paths = rogue::platform::DiscoverAppPaths(error);
+	if (!Paths)
 	{
-		LOG_INFO("UserData::CreateDir %s", std::string(directoryPath.begin(), directoryPath.end()).c_str());
-		fs::create_directories(directoryPath);
-	}
-}
-
-bool UserData::TryOpenReadFile(std::wstring const& inPath, std::fstream& outStream)
-{
-	if (DoesFileExist(inPath))
-	{
-		std::wstring fullPath = FormatPath(inPath);
-		EnsureParentDirectoriesExist(fullPath);
-
-		LOG_INFO("UserData::OpenRead %s", std::string(fullPath.begin(), fullPath.end()).c_str());
-
-		outStream.close();
-		outStream.open(fullPath.c_str(), std::ios::binary | std::ios::in);
-		return outStream.is_open();
-	}
-
-	return false;
-}
-
-bool UserData::TryOpenWriteFile(std::wstring const& inPath, std::fstream& outStream, bool createIfMissing)
-{
-	if (createIfMissing || DoesFileExist(inPath))
-	{
-		std::wstring fullPath = FormatPath(inPath);
-		EnsureParentDirectoriesExist(fullPath);
-
-		LOG_INFO("UserData::OpenWrite %s", std::string(fullPath.begin(), fullPath.end()).c_str());
-
-		outStream.close();
-		outStream.open(fullPath.c_str(), std::ios::binary | std::ios::out | std::ios::trunc);
-		return outStream.is_open();
-	}
-
-	return false;
-}
-
-bool UserData::TryOpenAppendFile(std::wstring const& inPath, std::fstream& outStream, bool createIfMissing)
-{
-	if (createIfMissing || DoesFileExist(inPath))
-	{
-		std::wstring fullPath = FormatPath(inPath);
-		EnsureParentDirectoriesExist(fullPath);
-
-		LOG_INFO("UserData::OpenWrite %s", std::string(fullPath.begin(), fullPath.end()).c_str());
-
-		outStream.close();
-		outStream.open(fullPath.c_str(), std::ios::out | std::ios::app);
-		return outStream.is_open();
+		LOG_ERROR("Cannot initialize application paths: %s", error.c_str());
+		return false;
 	}
 
-	return false;
-}
+	auto const migration = rogue::platform::ImportLegacyWindowsData(*Paths);
+	RogueLog_Initialize(Paths->logFile);
+	for (std::string const& diagnostic : migration.diagnostics)
+		LOG_ERROR("Legacy data import: %s", diagnostic.c_str());
+	if (migration.importedData)
+		LOG_INFO("Imported data from the original Rogue Assistant");
+	if (migration.importedSettings)
+		LOG_INFO("Imported legacy settings.ini");
 
-void UserData::Init()
-{
-	std::ifstream stream("settings.ini");
-
-	if (stream.is_open())
+	if (!rogue::platform::EnsureDirectory(Paths->dataDirectory, error)
+		|| !rogue::platform::EnsureDirectory(Paths->configDirectory, error)
+		|| !rogue::platform::EnsureDirectory(Paths->scriptDirectory, error))
 	{
-		std::string line;
-		while (std::getline(stream, line))
-		{
-			std::vector<std::string> parts = strutil::split(line, '=');
-			if (parts.size() == 2)
-			{
-				SetSavedString(parts[0], parts[1]);
-			}
-		}
-		stream.close();
+		LOG_ERROR("Cannot initialize application directories: %s", error.c_str());
+		return false;
 	}
+
+	auto const loaded = rogue::platform::LoadSettings(Paths->settingsFile);
+	CanWriteSettings = loaded.Succeeded();
+	if (loaded.Succeeded())
+	{
+		SavedSettings = loaded.settings;
+		PendingSettingsChange = !loaded.fileFound || loaded.needsRewrite;
+	}
+	else
+	{
+		SavedSettings = {};
+		PendingSettingsChange = false;
+		for (std::string const& diagnostic : loaded.diagnostics)
+			LOG_ERROR("Settings: %s", diagnostic.c_str());
+		LOG_ERROR("The invalid settings file was left unchanged; defaults are active for this run");
+	}
+
+	return true;
 }
 
 void UserData::Update()
 {
-	if (s_PendingSavedValueChange)
+	if (!Paths || !PendingSettingsChange || !CanWriteSettings)
+		return;
+
+	std::string error;
+	if (!rogue::platform::SaveSettings(Paths->settingsFile, SavedSettings, error))
 	{
-		s_PendingSavedValueChange = false;
-		std::ofstream stream("settings.ini");
-
-		if (stream.is_open())
-		{
-			for (auto it : s_SavedValues)
-			{
-				stream << it.first << "=" << it.second << "\n";
-			}
-
-			stream.close();
-		}
+		LOG_ERROR("Cannot save settings: %s", error.c_str());
+		return;
 	}
+	PendingSettingsChange = false;
+}
+
+void UserData::Shutdown()
+{
+	Update();
+	RogueLog_Shutdown();
+}
+
+std::filesystem::path UserData::GetDataDirectory()
+{
+	return Paths ? Paths->dataDirectory : fs::path{};
+}
+
+std::filesystem::path UserData::GetConfigDirectory()
+{
+	return Paths ? Paths->configDirectory : fs::path{};
+}
+
+std::filesystem::path UserData::GetResourceDirectory()
+{
+	return Paths ? Paths->resourceDirectory : fs::path{};
+}
+
+std::filesystem::path UserData::GetScriptDirectory()
+{
+	return Paths ? Paths->scriptDirectory : fs::path{};
 }
 
 std::string UserData::GetSavedString(std::string const& key, std::string const& defaultValue)
 {
-	auto it = s_SavedValues.find(key);
-	if (it == s_SavedValues.end())
-	{
-		SetSavedString(key, defaultValue);
-		return defaultValue;
-	}
-
-	return it->second;
+	std::string const value = rogue::platform::GetSetting(SavedSettings, key);
+	return value.empty() && key != rogue::platform::MultiplayerJoinIpKey ? defaultValue : value;
 }
 
 void UserData::SetSavedString(std::string const& key, std::string const& value)
 {
-	s_SavedValues[key] = value;
-	s_PendingSavedValueChange = true;
+	auto candidate = SavedSettings;
+	std::string error;
+	if (!rogue::platform::TrySetSetting(candidate, key, value, error))
+	{
+		LOG_WARN("Ignoring invalid setting %s: %s", key.c_str(), error.c_str());
+		return;
+	}
+	SavedSettings = std::move(candidate);
+	PendingSettingsChange = true;
 }
 
 int UserData::GetSavedInt(std::string const& key, int defaultValue)
 {
-	std::string strValue = GetSavedString(key, std::to_string(defaultValue));
-
-	try 
+	std::string const value = GetSavedString(key, std::to_string(defaultValue));
+	try
 	{
-		return std::stoi(strValue);
+		std::size_t parsed = 0;
+		int const result = std::stoi(value, &parsed, 10);
+		return parsed == value.size() ? result : defaultValue;
 	}
-	catch (std::exception) //& e)
+	catch (std::exception const&)
 	{
-		SetSavedInt(key, defaultValue);
 		return defaultValue;
 	}
 }
@@ -198,5 +217,3 @@ void UserData::SetSavedInt(std::string const& key, int value)
 {
 	SetSavedString(key, std::to_string(value));
 }
-
-#pragma warning( pop )

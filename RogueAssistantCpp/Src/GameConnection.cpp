@@ -1,35 +1,52 @@
 #include "GameConnection.h"
+#include "Behaviours/CommonBehaviour.h"
 #include "GameConnectionManager.h"
 #include "GameData.h"
-#include "GameDataRequest.h"
 #include "Log.h"
-#include "Behaviours/CommonBehaviour.h"
 
-std::string const GameConnection::c_FirstHandshake = "3to8UEaoManH7wB4lKlLRgywSHHKmI0g";
-std::string const GameConnection::c_SecondHandshake = "Em68TrzBAFlyhBCOm4XQIjGWbdNhuplY";
+#include <cstring>
+#include <limits>
+#include <stdexcept>
+#include <utility>
 
-GameConnection::GameConnection()
-	: m_State(GameConnectionState::AwaitingFirstHandshake)
-	, m_GameRPCs(*this)
-	, m_UpdateFrame(0)
-	, m_UpdateTimer(UpdateTimer::c_10UPS) // todo - give option? 10ups is less laggy emu but smoother mp
+GameConnection::GameConnection(GameConnectionManager& manager, TimeDurationNS updateInterval)
+	: m_Manager(manager), m_State(GameConnectionState::AwaitingFirstHandshake), m_UpdateTimer(updateInterval)
 {
 	m_ObservedGameMemory = std::make_unique<ObservedGameMemory>(*this);
 }
 
+GameConnection::GameConnection(GameConnectionManager& manager, std::shared_ptr<IGameMemoryTransport> transport,
+							   TimeDurationNS updateInterval)
+	: GameConnection(manager, updateInterval)
+{
+	if (!transport)
+		throw std::invalid_argument("GameConnection requires a memory transport");
+	m_GameSession = std::make_unique<GameSession>(std::move(transport));
+}
+
 GameConnection::~GameConnection()
 {
+	m_State = GameConnectionState::Disconnected;
+	if (m_GameSession)
+		m_GameSession->Stop();
 }
 
 void GameConnection::Update()
 {
-	// Run the callbacks for any requests the emulator thread has finished servicing.
-	// These used to fire on the Lua thread, which meant ObservedGameMemory and the
-	// behaviours were mutated from two threads at once. Dispatching here keeps all
-	// of that on this connection's own thread.
-	GameConnectionManager::Instance().DispatchCompletedDataRequests(*this);
-
-	int frame = m_UpdateFrame++;
+	if (m_GameSession)
+	{
+		m_GameSession->Poll();
+		// A transport disconnect normally completes pending requests. It can also
+		// happen between observation ticks, when there is no request to complete.
+		// Check the transport state too, so the manager can remove the old game
+		// connection and accept the reconnecting mGBA script.
+		if (!HasDisconnected() && m_GameSession->State() != TransportState::Connected)
+		{
+			LOG_INFO("Game memory transport disconnected between requests");
+			Disconnect();
+			return;
+		}
+	}
 
 	switch (m_State)
 	{
@@ -39,34 +56,34 @@ void GameConnection::Update()
 		LOG_INFO("Game: Connection accepted");
 		AddDefaultBehaviours();
 		break;
+	case GameConnectionState::Connected:
+	case GameConnectionState::Disconnected:
+		break;
 	}
-
 
 	if (m_UpdateTimer.Update())
 	{
-		if (IsReady())
+		if (IsReady() && m_GameSession && m_GameSession->CanSubmit())
 		{
 			m_ObservedGameMemory->Update();
-			//m_GameRPCs.Update();
 		}
 
-		// Make a copy, so behaviours can add new ones for next frame
-		std::vector<GameConnectionBehaviourRef> behavioursToUpdate;
-		{
-			std::lock_guard<std::mutex> lock(m_BehavioursMutex);
-			behavioursToUpdate = m_Behaviours;
-		}
+		// Copy the list so behaviors can add entries for the next update.
+		std::vector<GameConnectionBehaviourRef> behavioursToUpdate = m_Behaviours;
 
-		for (auto behaviour : behavioursToUpdate)
+		for (auto const& behaviour : behavioursToUpdate)
 		{
-			// Only update, if not in the remove queue 
-			auto findIt = std::find(m_BehavioursToRemove.begin(), m_BehavioursToRemove.end(), behaviour->shared_from_this());
+			if (HasDisconnected())
+				break;
+			// Skip behaviors that are waiting for removal.
+			auto findIt =
+				std::find(m_BehavioursToRemove.begin(), m_BehavioursToRemove.end(), behaviour->shared_from_this());
 
-			if(findIt == m_BehavioursToRemove.end())
+			if (findIt == m_BehavioursToRemove.end())
 				behaviour->OnUpdate(*this);
 		}
 
-		for (auto behaviour : m_BehavioursToRemove)
+		for (auto const& behaviour : m_BehavioursToRemove)
 			RemoveBehaviourInternal(behaviour.get());
 
 		m_BehavioursToRemove.clear();
@@ -75,16 +92,24 @@ void GameConnection::Update()
 
 void GameConnection::Disconnect()
 {
-	std::vector<GameConnectionBehaviourRef> behaviours;
-	{
-		std::lock_guard<std::mutex> lock(m_BehavioursMutex);
-		behaviours = m_Behaviours;
-	}
-
-	for (auto behaviour : behaviours)
-		behaviour->OnDetach(*this);
+	if (m_State == GameConnectionState::Disconnected)
+		return;
 
 	m_State = GameConnectionState::Disconnected;
+	std::vector<GameConnectionBehaviourRef> behaviours = std::move(m_Behaviours);
+	m_Behaviours.clear();
+	m_BehavioursToRemove.clear();
+
+	for (auto const& behaviour : behaviours)
+		behaviour->OnDetach(*this);
+
+	if (m_GameSession)
+		m_GameSession->Stop();
+}
+
+void GameConnection::ReportError(std::string error)
+{
+	m_Manager.PushError(std::move(error));
 }
 
 void GameConnection::AddDefaultBehaviours()
@@ -96,16 +121,13 @@ void GameConnection::AddBehaviour(IGameConnectionBehaviour* behaviour)
 {
 	GameConnectionBehaviourRef ref = behaviour->shared_from_this();
 
-	{
-		std::lock_guard<std::mutex> lock(m_BehavioursMutex);
 #ifdef _ASSERTS
-		auto findIt = std::find(m_Behaviours.begin(), m_Behaviours.end(), ref);
-		ASSERT_MSG(findIt == m_Behaviours.end(), "Behaviour already added");
+	auto findIt = std::find(m_Behaviours.begin(), m_Behaviours.end(), ref);
+	ASSERT_MSG(findIt == m_Behaviours.end(), "Behavior already added");
 #endif
-		m_Behaviours.push_back(ref);
-	}
+	m_Behaviours.push_back(ref);
 
-	// Deliberately outside the lock - OnAttach runs user code
+	// SessionWorker runs behaviors and their callbacks on one thread.
 	behaviour->OnAttach(*this);
 }
 
@@ -119,19 +141,15 @@ bool GameConnection::RemoveBehaviourInternal(IGameConnectionBehaviour* behaviour
 	GameConnectionBehaviourRef ref = behaviour->shared_from_this();
 	bool found = false;
 
-	{
-		std::lock_guard<std::mutex> lock(m_BehavioursMutex);
-		auto findIt = std::find(m_Behaviours.begin(), m_Behaviours.end(), ref);
+	auto findIt = std::find(m_Behaviours.begin(), m_Behaviours.end(), ref);
 
-		if (findIt != m_Behaviours.end())
-		{
-			m_Behaviours.erase(findIt);
-			found = true;
-		}
+	if (findIt != m_Behaviours.end())
+	{
+		m_Behaviours.erase(findIt);
+		found = true;
 	}
 
-	// Deliberately outside the lock - OnDetach runs user code. `ref` keeps the
-	// behaviour alive until we're done with it.
+	// `ref` keeps the behavior alive until OnDetach returns.
 	if (found)
 		behaviour->OnDetach(*this);
 
@@ -140,97 +158,19 @@ bool GameConnection::RemoveBehaviourInternal(IGameConnectionBehaviour* behaviour
 
 ObservedGameMemory& GameConnection::GetObservedGameMemory()
 {
-	ASSERT_MSG(m_ObservedGameMemory != nullptr, "Attempt to use observed game memory before initialise");
+	ASSERT_MSG(m_ObservedGameMemory != nullptr, "Attempt to use observed game memory before initialization");
 	return *m_ObservedGameMemory.get();
 }
 
 ObservedGameMemory const& GameConnection::GetObservedGameMemory() const
 {
-	ASSERT_MSG(m_ObservedGameMemory != nullptr, "Attempt to use observed game memory before initialise");
+	ASSERT_MSG(m_ObservedGameMemory != nullptr, "Attempt to use observed game memory before initialization");
 	return *m_ObservedGameMemory.get();
-}
-
-// helper todo - should move
-template<typename T>
-bool str2num(T& i, char const* s, int base = 0)
-{
-	char* end;
-	long  l;
-	errno = 0;
-	l = strtol(s, &end, base);
-	if ((errno == ERANGE && l == LONG_MAX))// || l > (long)std::numeric_limits<T>::max()) 
-	{
-		return false;
-	}
-	if ((errno == ERANGE && l == LONG_MIN))// || l < (long)std::numeric_limits<T>::min()) 
-	{
-		return false;
-	}
-	if (*s == '\0' || *end != '\0') {
-		return false;
-	}
-	i = (T)l;
-	return true;
-}
-
-void GameConnection::OnRecieveData(u8* data, size_t size)
-{
-	switch (m_State)
-	{
-	case GameConnectionState::AwaitingFirstHandshake:
-	case GameConnectionState::AwaitingSecondHandshake:
-		break;
-
-	case GameConnectionState::Connected:
-
-		// Attempt to read and call registered callbacks
-		std::string readId;
-		std::string readSize;
-
-		size_t offset = 0;
-		u8 readMode = 0;
-
-		for (; offset < size; ++offset)
-		{
-			if (data[offset] == ';')
-			{
-				if (readMode == 1)
-				{
-					// Read both readId and readSize
-					GameMessageID messageId;
-					u32 blockSize = 0;
-					if (str2num(messageId.CompactedID, readId.c_str()) && str2num(blockSize, readSize.c_str()))
-					{
-						OnRecieveMessage(messageId, &data[offset + 1], blockSize);
-					}
-					else
-					{
-						LOG_WARN("Failed to parse incoming recv");
-					}
-
-					offset += blockSize;
-
-					// Clear for next 
-					readId.clear();
-					readSize.clear();
-					readMode = 0;
-				}
-				else
-					++readMode;
-			}
-			else if(readMode == 0)
-				readId += data[offset];
-			else
-				readSize += data[offset];
-		}
-
-		break;
-	}
 }
 
 void GameConnection::OnRecieveMessage(GameMessageID messageId, u8 const* data, size_t size)
 {
-	switch (messageId.Channel)
+	switch (messageId.GetChannel())
 	{
 	case GameMessageChannel::CommonRead:
 		m_ObservedGameMemory->OnRecieveMessage(messageId, data, size);
@@ -241,65 +181,63 @@ void GameConnection::OnRecieveMessage(GameMessageID messageId, u8 const* data, s
 	}
 }
 
-bool GameConnection::HandleExpectedHandshake(std::string const& expectedHandshake, u8* data, size_t size)
+void GameConnection::OnMemoryResult(GameMessageID messageId, MemoryResult result)
 {
-	if (size != expectedHandshake.length())
+	if (m_State == GameConnectionState::Disconnected)
+		return;
+	if (result.status == MemoryResult::Status::Disconnected)
 	{
-		LOG_WARN("Invalid incoming handshake size");
+		LOG_INFO("Game memory request %u ended because mGBA disconnected", static_cast<unsigned>(result.id));
+		Disconnect();
+		return;
 	}
-	else
+	if (result.status != MemoryResult::Status::Ok)
 	{
-		int result = strncmp(expectedHandshake.c_str(), (const char*)data, size);
-		if (result == 0)
-		{
-			// Handshake matches
-			return true;
-		}
-		else
-		{
-			LOG_WARN("Unexpected handshake");
-		}
+		LOG_ERROR("Game memory request %u failed with status %u", static_cast<unsigned>(result.id),
+				  static_cast<unsigned>(result.status));
+		ReportError("The connection to mGBA was lost.");
+		Disconnect();
+		return;
 	}
 
-	return false;
+	std::vector<u8> bytes(result.data.size());
+	if (!result.data.empty())
+		std::memcpy(bytes.data(), result.data.data(), result.data.size());
+	OnRecieveMessage(messageId, bytes.data(), bytes.size());
 }
 
-
-void GameConnection::WriteRequest(GameMessageID messageId, size_t addr, void const* data, size_t size)
+bool GameConnection::WriteRequest(GameMessageID messageId, GameAddress addr, void const* data, size_t size,
+								  std::function<void()> onSuccess)
 {
 	ASSERT_MSG(IsReady(), "Attempting to write data, but not ready");
+	if (!m_GameSession || size > std::numeric_limits<std::uint32_t>::max() || (size != 0 && data == nullptr))
+	{
+		LOG_ERROR("Invalid game memory write request");
+		Disconnect();
+		return false;
+	}
 
-	GameDataRequest req;
-	req.m_Type = GameDataRequest::REQUEST_WRITE;
-	req.m_Address = addr;
-	req.m_Size = size;
-	req.m_Callback = [this, messageId](std::vector<u8> const& data)
-		{
-			if(m_State != GameConnectionState::Disconnected)
-				OnRecieveMessage(messageId, data.data(), data.size());
-		};
-
-	req.m_Data.resize(size);
-	memcpy_s(req.m_Data.data(), req.m_Data.size(), data, size);
-
-	req.m_Owner = weak_from_this();
-	GameConnectionManager::Instance().EnqueueGameDataRequest(req);
+	auto const* bytes = static_cast<std::byte const*>(data);
+	std::span<std::byte const> const payload(bytes, size);
+	return m_GameSession->Write(addr, payload,
+		[this, messageId, onSuccess = std::move(onSuccess)](MemoryResult result) {
+			bool const succeeded = result.status == MemoryResult::Status::Ok;
+			OnMemoryResult(messageId, std::move(result));
+			if (succeeded && IsReady() && onSuccess)
+				onSuccess();
+		});
 }
 
-void GameConnection::ReadRequest(GameMessageID messageId, size_t addr, size_t size)
+bool GameConnection::ReadRequest(GameMessageID messageId, GameAddress addr, size_t size)
 {
 	ASSERT_MSG(IsReady(), "Attempting to write data, but not ready");
+	if (!m_GameSession || size > std::numeric_limits<std::uint32_t>::max())
+	{
+		LOG_ERROR("Invalid game memory read request");
+		Disconnect();
+		return false;
+	}
 
-	GameDataRequest req;
-	req.m_Type = GameDataRequest::REQUEST_READ;
-	req.m_Address = addr;
-	req.m_Size = size;
-	req.m_Callback = [this, messageId](std::vector<u8> const& data)
-		{
-			if (m_State != GameConnectionState::Disconnected)
-				OnRecieveMessage(messageId, data.data(), data.size());
-		};
-
-	req.m_Owner = weak_from_this();
-	GameConnectionManager::Instance().EnqueueGameDataRequest(req);
+	return m_GameSession->Read(addr, static_cast<std::uint32_t>(size),
+							   [this, messageId](MemoryResult result) { OnMemoryResult(messageId, std::move(result)); });
 }

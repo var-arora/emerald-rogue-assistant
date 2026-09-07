@@ -1,26 +1,29 @@
 #include "Timer.h"
 
-#define NANOSECONDS_PER_SECOND (1000000000)
+namespace
+{
+	constexpr TimeDurationNS NanosecondsPerSecond = 1'000'000'000;
+}
 
-TimeDurationNS const UpdateTimer::c_1UPS = NANOSECONDS_PER_SECOND;
-TimeDurationNS const UpdateTimer::c_5UPS = NANOSECONDS_PER_SECOND / 5;
-TimeDurationNS const UpdateTimer::c_10UPS = NANOSECONDS_PER_SECOND / 10;
-TimeDurationNS const UpdateTimer::c_20UPS = NANOSECONDS_PER_SECOND / 20;
-TimeDurationNS const UpdateTimer::c_25UPS = NANOSECONDS_PER_SECOND / 25;
-TimeDurationNS const UpdateTimer::c_30UPS = NANOSECONDS_PER_SECOND / 30;
-TimeDurationNS const UpdateTimer::c_60UPS = NANOSECONDS_PER_SECOND / 60;
+TimeDurationNS const UpdateTimer::c_1UPS = NanosecondsPerSecond;
+TimeDurationNS const UpdateTimer::c_5UPS = NanosecondsPerSecond / 5;
+TimeDurationNS const UpdateTimer::c_10UPS = NanosecondsPerSecond / 10;
+TimeDurationNS const UpdateTimer::c_20UPS = NanosecondsPerSecond / 20;
+TimeDurationNS const UpdateTimer::c_25UPS = NanosecondsPerSecond / 25;
+TimeDurationNS const UpdateTimer::c_30UPS = NanosecondsPerSecond / 30;
+TimeDurationNS const UpdateTimer::c_60UPS = NanosecondsPerSecond / 60;
 
 TimeDurationNS UpdateTimer::GetCurrentClock()
 {
-	auto timePoint = std::chrono::high_resolution_clock::now();
+	auto timePoint = std::chrono::steady_clock::now();
 	auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(timePoint.time_since_epoch());
 	return duration.count();
 }
 
 UpdateTimer::UpdateTimer(TimeDurationNS const& interval)
-	: m_UpdateInterval(interval)
-	, m_LastUpdate()
+	: m_LastUpdate()
 	, m_Timer(0)
+	, m_UpdateInterval(interval)
 	, m_WasPaused(true)
 {
 }
@@ -44,7 +47,7 @@ bool UpdateTimer::Update()
 		{
 			m_Timer -= m_UpdateInterval;
 
-			// Gotten too far ahead
+			// Drop extra elapsed time so a long pause does not cause too many updates.
 			if (m_Timer >= m_UpdateInterval * 3)
 				m_Timer = m_UpdateInterval;
 

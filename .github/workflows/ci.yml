@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable-build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: MSVC x64
+            os: windows-latest
+            cc: cl
+            cxx: cl
+            preset: ci
+          - name: Apple Clang
+            os: macos-15
+            cc: clang
+            cxx: clang++
+            preset: ci
+          - name: GCC
+            os: ubuntu-latest
+            cc: gcc
+            cxx: g++
+            preset: ci
+          - name: Clang and clang-tidy
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+            preset: ci-clang-tidy
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select C++20-capable Xcode
+        if: runner.os == 'macOS'
+        run: sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          libfreetype6-dev libgl1-mesa-dev libudev-dev libx11-dev libxcursor-dev
+          libxext-dev libxi-dev libxrandr-dev
+      - name: Configure MSVC environment
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-msvc
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} --fresh -G Ninja
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure
+
+  sanitizers:
+    name: ASan and UBSan
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Linux desktop dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          libfreetype6-dev libgl1-mesa-dev libudev-dev libx11-dev libxcursor-dev
+          libxext-dev libxi-dev libxrandr-dev
+      - name: Configure
+        run: cmake --preset ci-sanitizers --fresh -G Ninja
+      - name: Build
+        run: cmake --build --preset ci-sanitizers --parallel
+      - name: Test
+        run: ctest --preset ci-sanitizers --output-on-failure
+
+  lua-bridge:
+    name: Lua 5.4 bridge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Lua 5.4
+        run: sudo apt-get update && sudo apt-get install --yes lua5.4
+      - name: Test portable mGBA adapter
+        run: >-
+          lua5.4 tests/lua/BridgeScriptTests.lua
+          RogueAssistantCpp/Assets/RogueAssistant_mGBA.lua
+          tests/fixtures/bridge_protocol_1.golden

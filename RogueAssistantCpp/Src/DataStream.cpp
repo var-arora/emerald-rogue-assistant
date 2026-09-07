@@ -1,5 +1,8 @@
 #include "DataStream.h"
-#include "Log.h"
+#include "Endian.h"
+
+#include <algorithm>
+#include <iterator>
 
 DataStream::DataStream()
 	: m_Pos(0)
@@ -7,50 +10,37 @@ DataStream::DataStream()
 {
 }
 
-DataStream::DataStream(std::fstream& inStream)
+DataStream::DataStream(std::istream& inStream)
 	: m_Pos(0)
 	, m_IsWrite(false)
 {
-	while (inStream.good())
+	for (std::istreambuf_iterator<char> it(inStream), end; it != end; ++it)
 	{
-		char temp;
-		inStream.read(&temp, 1);
-		m_Data.push_back(temp);
+		m_Data.push_back(static_cast<u8>(*it));
 	}
 }
 
 template<typename T>
-static bool SerializeInternalWrite(std::vector<u8>& data, size_t& pos, T& val)
+static bool SerializeInternalWrite(std::vector<u8>& data, std::size_t& pos, T val)
 {
-	u8* ptr = reinterpret_cast<u8*>(&val);
-
-	for (size_t i = 0; i < sizeof(T); ++i)
-		data.push_back(ptr[i]);
-
+	rogue::endian::AppendLittle(data, val);
 	pos += sizeof(T);
 	return true;
 }
 
 template<typename T>
-static bool SerializeInternalRead(std::vector<u8>& data, size_t& pos, T& val)
+static bool SerializeInternalRead(std::vector<u8> const& data, std::size_t& pos, T& val)
 {
-	// Fail
-	if (pos + sizeof(T) > data.size())
+	if (!rogue::endian::ReadLittle<T>(data, pos, val))
 	{
-		val = 0;
 		return false;
 	}
-
-	u8* ptr = reinterpret_cast<u8*>(&val);
-
-	for (size_t i = 0; i < sizeof(T); ++i)
-		ptr[i] = data[pos++];
-
+	pos += sizeof(T);
 	return true;
 }
 
 template<typename T>
-static bool SerializeInternal(std::vector<u8>& data, size_t& pos, bool isWrite, T& val)
+static bool SerializeInternal(std::vector<u8>& data, std::size_t& pos, bool isWrite, T& val)
 {
 	if (isWrite)
 		return SerializeInternalWrite(data, pos, val);
@@ -94,28 +84,30 @@ bool DataStream::Serialize(s64& val)
 	return SerializeInternal(m_Data, m_Pos, m_IsWrite, val);
 }
 
-bool DataStream::Serialize(u8* data, size_t size)
+bool DataStream::Serialize(u8* data, std::size_t size)
 {
-	bool success = true;
-
-	for (size_t i = 0; i < size; ++i)
+	if (size == 0)
 	{
-		if (m_IsWrite)
-		{
-			m_Data.push_back(data[i]);
-			m_Pos++;
-		}
-		else
-		{
-			if (m_Pos < m_Data.size())
-				data[i] = m_Data[m_Pos++];
-			else
-			{
-				data[i] = 0;
-				success = false;
-			}
-		}
+		return true;
 	}
 
-	return success;
+	if (data == nullptr)
+	{
+		return false;
+	}
+
+	if (m_IsWrite)
+	{
+		m_Data.insert(m_Data.end(), data, data + size);
+		m_Pos += size;
+		return true;
+	}
+
+	std::size_t const available = m_Pos <= m_Data.size() ? m_Data.size() - m_Pos : 0;
+	std::size_t const copySize = std::min(size, available);
+	if (copySize != 0)
+		std::copy_n(m_Data.data() + m_Pos, copySize, data);
+	std::fill(data + copySize, data + size, u8{0});
+	m_Pos += copySize;
+	return copySize == size;
 }

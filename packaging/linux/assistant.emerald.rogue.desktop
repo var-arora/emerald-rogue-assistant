@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Emerald Rogue Assistant
+Comment=Companion application for Pokémon Emerald Rogue
+Exec=RogueAssistant
+Icon=assistant.emerald.rogue
+Terminal=false
+Categories=Game;Utility;
+Keywords=Pokémon;Pokemon;Emerald;Roguelite;mGBA;
+StartupWMClass=RogueAssistant

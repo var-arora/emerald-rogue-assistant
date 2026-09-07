@@ -1,0 +1,14 @@
+* text=auto eol=lf
+
+# Hide line-by-line diffs for bundled third-party code.
+RogueAssistantCpp/External/** -diff
+
+*.png binary
+*.ico binary
+*.icns binary
+*.dmg binary
+*.AppImage binary
+*.ttf binary
+*.lib binary
+*.dll binary
+*.exe binary

@@ -1,0 +1,220 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "ROGUE_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "dev-debug",
+      "displayName": "Developer Debug",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "dev-release",
+      "displayName": "Developer Release",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "Continuous Integration",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ROGUE_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "ci-sanitizers",
+      "displayName": "Continuous Integration with ASan and UBSan",
+      "inherits": "ci",
+      "cacheVariables": {
+        "ROGUE_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "ci-clang-tidy",
+      "displayName": "Continuous Integration with clang-tidy",
+      "inherits": "ci",
+      "cacheVariables": {
+        "ROGUE_ENABLE_CLANG_TIDY": "ON"
+      }
+    },
+    {
+      "name": "release-base",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ROGUE_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "release-windows-x64",
+      "displayName": "Release - Windows x64",
+      "inherits": "release-base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "ROGUE_PACKAGE_PLATFORM": "windows-x64"
+      }
+    },
+    {
+      "name": "release-macos-arm64",
+      "displayName": "Release - macOS arm64",
+      "inherits": "release-base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
+        "ROGUE_PACKAGE_PLATFORM": "macos-arm64"
+      }
+    },
+    {
+      "name": "release-linux-x86_64",
+      "displayName": "Release - Linux x86_64",
+      "inherits": "release-base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "ROGUE_PACKAGE_PLATFORM": "linux-x86_64"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dev-debug",
+      "configurePreset": "dev-debug"
+    },
+    {
+      "name": "dev-release",
+      "configurePreset": "dev-release"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci"
+    },
+    {
+      "name": "ci-sanitizers",
+      "configurePreset": "ci-sanitizers"
+    },
+    {
+      "name": "ci-clang-tidy",
+      "configurePreset": "ci-clang-tidy"
+    },
+    {
+      "name": "release-windows-x64",
+      "configurePreset": "release-windows-x64"
+    },
+    {
+      "name": "release-macos-arm64",
+      "configurePreset": "release-macos-arm64"
+    },
+    {
+      "name": "release-linux-x86_64",
+      "configurePreset": "release-linux-x86_64"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "dev-debug",
+      "configurePreset": "dev-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "dev-release",
+      "configurePreset": "dev-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ci-sanitizers",
+      "configurePreset": "ci-sanitizers",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ci-clang-tidy",
+      "configurePreset": "ci-clang-tidy",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release-windows-x64",
+      "configurePreset": "release-windows-x64",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release-macos-arm64",
+      "configurePreset": "release-macos-arm64",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release-linux-x86_64",
+      "configurePreset": "release-linux-x86_64",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ],
+  "packagePresets": [
+    {
+      "name": "release-windows-x64",
+      "configurePreset": "release-windows-x64",
+      "generators": [
+        "ZIP"
+      ]
+    },
+    {
+      "name": "release-linux-x86_64",
+      "configurePreset": "release-linux-x86_64",
+      "generators": [
+        "TGZ"
+      ]
+    }
+  ]
+}

@@ -1,59 +1,105 @@
 #include "Log.h"
 
+#include <array>
+#include <chrono>
 #include <cstdarg>
+#include <csignal>
+#include <cstdlib>
 #include <ctime>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
 #include <mutex>
+#include <sstream>
+#include <thread>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <Windows.h>
+#endif
 
-static std::mutex s_LogMutex;
-static FILE* s_LogFile = nullptr;
-static bool s_LogFileAttempted = false;
+namespace
+{
+	std::mutex LogMutex;
+	std::ofstream LogFile;
+
+	std::tm LocalTime(std::time_t value)
+	{
+		std::tm result{};
+#if defined(_WIN32)
+		localtime_s(&result, &value);
+#else
+		localtime_r(&value, &result);
+#endif
+		return result;
+	}
+
+	std::string FormatPrefix(char const* level)
+	{
+		auto const now = std::chrono::system_clock::now();
+		std::time_t const time = std::chrono::system_clock::to_time_t(now);
+		std::tm local = LocalTime(time);
+		std::ostringstream prefix;
+		prefix << '[' << std::put_time(&local, "%H:%M:%S") << ']';
+		prefix << '[' << level << ']';
+		prefix << "[t" << std::this_thread::get_id() << "] ";
+		return prefix.str();
+	}
+}
+
+void RogueLog_Initialize(std::filesystem::path const& logFile)
+{
+	std::lock_guard<std::mutex> lock(LogMutex);
+	LogFile.close();
+	std::error_code ec;
+	if (!logFile.parent_path().empty())
+		std::filesystem::create_directories(logFile.parent_path(), ec);
+	if (!ec)
+		LogFile.open(logFile, std::ios::out | std::ios::trunc);
+}
+
+void RogueLog_Shutdown()
+{
+	std::lock_guard<std::mutex> lock(LogMutex);
+	LogFile.flush();
+	LogFile.close();
+}
 
 void RogueLog_Write(char const* level, char const* format, ...)
 {
-	char message[1024];
-
+	std::array<char, 1024> message{};
 	va_list args;
 	va_start(args, format);
-	int written = vsnprintf(message, sizeof(message), format, args);
+	int const written = std::vsnprintf(message.data(), message.size(), format, args);
 	va_end(args);
-
 	if (written < 0)
 		return;
 
-	// Called from the window thread, the connection threads and the emulator Lua
-	// thread, so serialise it.
-	std::lock_guard<std::mutex> lock(s_LogMutex);
-
-	if (!s_LogFileAttempted)
+	std::lock_guard<std::mutex> lock(LogMutex);
+	std::string const line = FormatPrefix(level) + message.data() + '\n';
+	std::cerr << line;
+	std::cerr.flush();
+	if (LogFile)
 	{
-		s_LogFileAttempted = true;
-		fopen_s(&s_LogFile, "RogueAssistant.log", "w");
+		LogFile << line;
+		LogFile.flush();
 	}
 
-	time_t now = time(nullptr);
-	tm local;
-	char stamp[32] = "";
-	if (localtime_s(&local, &now) == 0)
-		strftime(stamp, sizeof(stamp), "%H:%M:%S", &local);
-
-	unsigned long threadId = GetCurrentThreadId();
-
-	fprintf(stderr, "[%s][%s][t%lu] %s\n", stamp, level, threadId, message);
-	fflush(stderr);
-
-	if (s_LogFile != nullptr)
-	{
-		fprintf(s_LogFile, "[%s][%s][t%lu] %s\n", stamp, level, threadId, message);
-		fflush(s_LogFile); // we're logging to survive a hard crash, so don't buffer
-	}
-
+#if defined(_WIN32)
 	if (IsDebuggerPresent())
-	{
-		char debugLine[1152];
-		snprintf(debugLine, sizeof(debugLine), "[%s][t%lu] %s\n", level, threadId, message);
-		OutputDebugStringA(debugLine);
-	}
+		OutputDebugStringA(line.c_str());
+#endif
+}
+
+void RogueLog_DebugBreak()
+{
+#if defined(_WIN32)
+	__debugbreak();
+#elif defined(SIGTRAP)
+	std::raise(SIGTRAP);
+#else
+	std::abort();
+#endif
 }

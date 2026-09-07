@@ -1,24 +1,37 @@
 #pragma once
-#include "Defines.h"
+
 #include "GameConnectionBehaviour.h"
+#include "Storage/HomeBoxFile.h"
 
-#include <fstream>
-#include <vector>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <queue>
-
-class DataStream;
+#include <string>
+#include <vector>
 
 class HomeBoxBehaviour : public IGameConnectionBehaviour
 {
-public:
-	virtual void OnAttach(GameConnection& game) override;
-	virtual void OnDetach(GameConnection& game) override;
-	virtual void OnUpdate(GameConnection& game) override;
+  public:
+	void OnAttach(GameConnection& game) override;
+	void OnDetach(GameConnection& game) override;
+	void OnUpdate(GameConnection& game) override;
 
-	inline bool IsLoading() const { return m_State < State::Update; }
-	inline bool IsSaving() const { return m_HasPendingFileWrite; }
+	[[nodiscard]] bool IsLoading() const
+	{
+		return !m_RequiresReopen && m_State < State::Update;
+	}
+	[[nodiscard]] bool IsSaving() const
+	{
+		return m_HasPendingFileWrite;
+	}
+	[[nodiscard]] bool RequiresReopen() const
+	{
+		return m_RequiresReopen;
+	}
 
-private:
+  private:
 	enum class State
 	{
 		OpenOfflineFile,
@@ -28,44 +41,48 @@ private:
 		WaitForInit,
 		Update,
 
-		First = OpenOfflineFile
+		First = OpenOfflineFile,
 	};
 
 	struct BoxData
 	{
-		std::vector<u8> m_MinimalData;
-		std::vector<u8> m_MonData;
-
-		u32 CalculateCheckSum() const;
+		std::vector<std::uint8_t> minimalData;
+		std::vector<std::uint8_t> pokemonData;
 	};
 
 	struct BoxWriteRequest
 	{
-		u32 m_BoxId;
-		u8 const* m_Data;
-		size_t m_Offset;
-		size_t m_BytesRemaining;
+		std::uint32_t boxId = 0;
+		std::uint8_t const* data = nullptr;
+		std::size_t offset = 0;
+		std::size_t bytesRemaining = 0;
 	};
 
-	State m_State;
-	std::vector<u8> m_LocalActiveBoxIndices;
-	std::vector<u8> m_RemoteActiveBoxIndices;
+	[[nodiscard]] bool ValidateLayout(GameConnection const& game, std::string& error) const;
+	[[nodiscard]] bool ValidateIndexOrder(std::vector<std::uint8_t> const& indices) const;
+	void LoadOfflineData(GameConnection& game, std::uint32_t trainerId);
+	void InitialiseLocalBoxData(GameConnection& game, std::uint32_t boxId);
+	void HandlePendingFileWrite(GameConnection& game, bool force = false);
+
+	[[nodiscard]] bool WriteMinimalBox(GameConnection& game, std::uint32_t boxId, std::uint8_t const* data);
+	[[nodiscard]] std::uint8_t const* GetMinimalBoxPtr(GameConnection& game, std::uint32_t boxId);
+
+	void BeginWriteMonBox(GameConnection& game, std::uint32_t boxId, std::uint8_t const* data);
+	[[nodiscard]] bool PumpWriteMonBox(GameConnection& game);
+
+	State m_State = State::First;
+	rogue::storage::HomeBoxDimensions m_Dimensions;
+	std::uint32_t m_LocalBoxCount = 0;
+	std::vector<std::uint8_t> m_LocalActiveBoxIndices;
+	std::vector<std::uint8_t> m_RemoteActiveBoxIndices;
 	std::vector<BoxData> m_ActiveBoxData;
 	std::vector<BoxData> m_StoredBoxData;
-	std::queue<BoxWriteRequest> m_BoxWriteRequest;
+	std::queue<BoxWriteRequest> m_BoxWriteRequests;
+	bool m_WaitingForBoxWrite = false;
+	std::uint32_t m_InitialiseBoxWriteIndex = 0;
 
-	std::wstring m_WriteFilePath;
+	std::filesystem::path m_WriteFilePath;
 	bool m_HasPendingFileWrite = false;
-
-	void InitaliseLocalBoxData(GameConnection& game, u32 boxId);
-	void HandlePendingFileWrite(GameConnection& game);
-	bool LoadDataFromFile(GameConnection& game, std::fstream& fileStream);
-	bool SerializeSavedData(GameConnection& game, DataStream& stream);
-
-	void WriteMinimalBox(GameConnection& game, u32 boxId, u8 const* data);
-	u8 const* GetMinimalBoxPtr(GameConnection& game, u32 boxId);
-
-	void BeginWriteMonBox(GameConnection& game, u32 boxId, u8 const* data);
-	bool PumpWriteMonBox(GameConnection& game);
-	u8 const* GetMonBoxPtr(GameConnection& game, u32 boxId);
+	bool m_RequiresReopen = false;
+	std::chrono::steady_clock::time_point m_NextSaveAttempt{};
 };

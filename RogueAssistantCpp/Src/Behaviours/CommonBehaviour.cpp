@@ -2,22 +2,18 @@
 #include "Behaviours/HomeBoxBehaviour.h"
 #include "Behaviours/MultiplayerBehaviour.h"
 #include "GameConnection.h"
-#include "GameConnectionManager.h"
 #include "GameData.h"
 #include "Log.h"
+#include "RomCompatibility.h"
 
-// Make sure to change the same value in the Game if this ever changes
-// (These numbers must match in order to connect)
-#define ROGUE_ASSISTANT_COMPAT_VERSION 3
+#include <limits>
 
-void CommonBehaviour::OnAttach(GameConnection & game)
+void CommonBehaviour::OnAttach(GameConnection&)
 {
-
 }
 
-void CommonBehaviour::OnDetach(GameConnection& game)
+void CommonBehaviour::OnDetach(GameConnection&)
 {
-
 }
 
 void CommonBehaviour::OnUpdate(GameConnection& game)
@@ -27,31 +23,51 @@ void CommonBehaviour::OnUpdate(GameConnection& game)
 
 	GameStructures::RogueAssistantHeader const& rogueHeader = game.GetObservedGameMemory().GetRogueHeader();
 
-	if (rogueHeader.rogueAssistantCompatVersion != ROGUE_ASSISTANT_COMPAT_VERSION)
+	if (rogueHeader.rogueAssistantCompatVersion != rogue::rom::RequiredAssistantApi)
 	{
-		GameConnectionManager::Instance().PushError("Cannot connect to Game. Do you need\nto update RogueAssistant?");
+		LOG_WARN("Unsupported ROM Assistant API: %u", rogueHeader.rogueAssistantCompatVersion);
+		game.ReportError("This game version is not supported.\nCheck for an assistant update.");
+		game.Disconnect();
+		return;
+	}
+	if (!rogue::rom::IsSupportedEdition(rogueHeader.rogueVersion))
+	{
+		game.ReportError("This ROM is not compatible.\nUse the Vanilla or EX edition.");
 		game.Disconnect();
 		return;
 	}
 
+	// Notify the game that the assistant is connected by repeatedly writing zero
+	// to the ROM-provided confirmation field. API 3 uses one integer. Check the
+	// ROM's size and address before making a request, so invalid values cannot
+	// cause a read past this local value or an address overflow.
+	if (rogueHeader.assistantConfirmSize == 0 || rogueHeader.assistantConfirmSize > sizeof(u32) ||
+		rogueHeader.assistantState > std::numeric_limits<GameAddress>::max() - rogueHeader.assistantConfirmOffset)
+	{
+		game.ReportError("Cannot connect.\nThe ROM connection data is invalid.");
+		game.Disconnect();
+		return;
+	}
 
-	// Notify game that connected, by constantly spamming 0 into the confirm address
-	//
 	u32 value = 0;
-	game.WriteRequest(CreateAnonymousMessageId(), rogueHeader.assistantState + rogueHeader.assistantConfirmOffset, &value, rogueHeader.assistantConfirmSize);
+	game.WriteRequest(CreateAnonymousMessageId(), rogueHeader.assistantState + rogueHeader.assistantConfirmOffset,
+					  &value, rogueHeader.assistantConfirmSize);
 
-
-	// Handle multiplayer connect/disconnect
-	//
+	// Attach or remove multiplayer behavior when the ROM changes its request.
 	if (game.GetObservedGameMemory().IsMultiplayerStateValid())
 	{
 		if (m_MultiplayerBehaviour.expired())
 		{
-			GameAddress multiplayerAddress = game.GetObservedGameMemory().GetMultiplayerStatePtr();
 			u8 const* multiplayerBlob = game.GetObservedGameMemory().GetMultiplayerStateBlob();
+			if (rogueHeader.netRequestStateOffset >=
+				game.GetObservedGameMemory().GetMultiplayerStateBlobSize())
+			{
+				game.ReportError("Cannot start multiplayer.\nThe ROM multiplayer data is invalid.");
+				game.Disconnect();
+				return;
+			}
 
 			u8 requestFlags = multiplayerBlob[rogueHeader.netRequestStateOffset];
-			//u8 currentFlags = multiplayerBlob[rogueHeader.netCurrentStateOffset];
 
 			if (requestFlags != 0)
 			{
@@ -70,8 +86,7 @@ void CommonBehaviour::OnUpdate(GameConnection& game)
 		}
 	}
 
-	// Handle home box connect/disconnect
-	//
+	// Attach or remove Home Box behavior when the ROM changes its request.
 	if (game.GetObservedGameMemory().IsHomeBoxStateValid())
 	{
 		if (m_HomeBoxBehaviour.expired())

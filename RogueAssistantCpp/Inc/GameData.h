@@ -1,9 +1,11 @@
 #pragma once
 #include "Defines.h"
 
+#include <cstddef>
 #include <string>
+#include <type_traits>
 
-typedef u32 GameAddress;
+using GameAddress = u32;
 
 class GameAddresses
 {
@@ -54,6 +56,7 @@ namespace GameStructures
 		GameAddress rogueAssistantHeader;
 		u32 rogueAssistantHandshake2;
 		u8 unk17;
+		u8 reservedAfterUnk17[3];
 		u32 saveBlock2Size;
 		u32 saveBlock1Size;
 		u32 partyCountOffset;
@@ -83,6 +86,7 @@ namespace GameStructures
 		u8 bagCountTMHMs;
 		u8 bagCountBerries;
 		u8 pcItemsCount;
+		u8 reservedAfterBagCounts[2];
 		u32 pcItemsOffset;
 		u32 giftRibbonsOffset;
 		u32 enigmaBerryOffset;
@@ -95,6 +99,7 @@ namespace GameStructures
 	{
 		u8 rogueVersion;
 		u8 rogueDebug;
+		u16 reserved;
 		u32 rogueAssistantCompatVersion;
 		u32 assistantConfirmSize;
 		u32 assistantConfirmOffset;
@@ -137,4 +142,23 @@ namespace GameStructures
 		u16 assistantSubstate;
 		u16 requestState;
 	};
-};
+
+	static_assert(sizeof(GFRomHeader) == 260);
+	static_assert(offsetof(GFRomHeader, rogueAssistantHandshake1) == 120);
+	static_assert(offsetof(GFRomHeader, rogueAssistantHeader) == 124);
+	static_assert(offsetof(GFRomHeader, rogueAssistantHandshake2) == 128);
+
+	static_assert(sizeof(RogueAssistantHeader) == 132);
+	static_assert(offsetof(RogueAssistantHeader, rogueAssistantCompatVersion) == 4);
+	static_assert(offsetof(RogueAssistantHeader, homeBoxPtr) == 128);
+
+	static_assert(sizeof(RogueAssistantState) == 54);
+	static_assert(offsetof(RogueAssistantState, assistantState) == 48);
+
+	static_assert(std::is_standard_layout_v<GFRomHeader>);
+	static_assert(std::is_trivially_copyable_v<GFRomHeader>);
+	static_assert(std::is_standard_layout_v<RogueAssistantHeader>);
+	static_assert(std::is_trivially_copyable_v<RogueAssistantHeader>);
+	static_assert(std::is_standard_layout_v<RogueAssistantState>);
+	static_assert(std::is_trivially_copyable_v<RogueAssistantState>);
+}

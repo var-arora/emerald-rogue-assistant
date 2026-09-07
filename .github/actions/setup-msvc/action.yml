@@ -1,0 +1,52 @@
+name: Set up MSVC
+description: Export the Visual Studio x64 developer environment for later workflow steps
+
+runs:
+  using: composite
+  steps:
+    - name: Enter Visual Studio developer shell
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+        if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+          throw "Could not find vswhere.exe at $vswhere"
+        }
+
+        $installationPath = & $vswhere `
+          -latest `
+          -products * `
+          -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+          -property installationPath
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($installationPath)) {
+          throw "Could not find a Visual Studio installation with the x64 C++ toolchain"
+        }
+
+        $installationPath = $installationPath.Trim()
+        $developerShell = Join-Path $installationPath "Common7\Tools\Launch-VsDevShell.ps1"
+        if (-not (Test-Path -LiteralPath $developerShell -PathType Leaf)) {
+          throw "Could not find Launch-VsDevShell.ps1 at $developerShell"
+        }
+
+        & $developerShell -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+        if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+          throw "Visual Studio developer shell did not place cl.exe on PATH"
+        }
+
+        foreach ($name in @(
+          "Path",
+          "INCLUDE",
+          "LIB",
+          "LIBPATH",
+          "VCINSTALLDIR",
+          "VCToolsInstallDir",
+          "VCToolsVersion",
+          "VSINSTALLDIR",
+          "WindowsSdkDir",
+          "WindowsSDKVersion"
+        )) {
+          $value = [Environment]::GetEnvironmentVariable($name, "Process")
+          if (-not [string]::IsNullOrEmpty($value)) {
+            "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+        }

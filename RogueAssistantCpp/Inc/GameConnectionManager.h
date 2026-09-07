@@ -1,97 +1,55 @@
 #pragma once
-#include "Defines.h"
-#include "SFML/Network.hpp"
-#include "GameDataRequest.h"
+
+#include "Application/ISessionRuntime.h"
+#include "Bridge/GameMemoryTransport.h"
+
+#include <cstdint>
 #include <memory>
-#include <mutex>
-#include <thread>
-#include <queue>
+#include <optional>
+#include <string>
+#include <vector>
 
 class GameConnection;
-class GameConnectionManager;
 
-struct GameDataRequest;
-
-typedef std::shared_ptr<GameConnection> GameConnectionRef;
+using GameConnectionRef = std::shared_ptr<GameConnection>;
 
 struct ActiveGameConnection
 {
-	GameConnectionRef m_Game;
-	std::thread m_UpdateThread;
+	std::uint64_t id = 0;
+	GameConnectionRef game;
 };
 
-// Threading model
-// ---------------
-// Three threads touch this class:
-//   * the window thread      (RogueAssistant_MainLoop) - owns m_ActiveConnections
-//   * a per-connection thread(BackgroundUpdate)        - produces data requests
-//   * the emulator Lua thread(rogue_next_data_request) - consumes data requests
-//
-// The two request queues are the only state shared between the connection thread and
-// the Lua thread, and both are guarded. Request *callbacks* are deliberately NOT run
-// on the Lua thread: completed requests are posted back and dispatched from
-// GameConnection::Update, so everything a callback touches (ObservedGameMemory,
-// behaviours) stays single-threaded on the connection thread.
-class GameConnectionManager
+class GameConnectionManager final : public rogue::app::ISessionRuntime
 {
-public:
-	GameConnectionManager() {};
+  public:
+	explicit GameConnectionManager(std::shared_ptr<IGameMemoryTransport> transport);
+	explicit GameConnectionManager(std::optional<std::uint16_t> bridgePortOverride);
+	~GameConnectionManager() override;
 
-	static GameConnectionManager& Instance();
-	static bool IsValid();
+	void Start() override;
+	void HandleCommand(rogue::app::UiCommand command) override;
+	void Tick() override;
+	[[nodiscard]] rogue::app::UiSnapshot Snapshot() const override;
+	void Stop() override;
 
-	void OpenListener();
-	void CloseListener();
+	void PushError(std::string error);
 
+  private:
 	void UpdateConnections();
+	void DisconnectConnections();
+	void ExportPortableScript();
+	void ChangeBridgePort(std::string const& value);
 
-	// Called on a connection thread
-	void EnqueueGameDataRequest(GameDataRequest const& request);
-	// Called on the emulator Lua thread
-	bool TryPopDataRequest(GameDataRequest& target);
-	void PushCompletedDataRequest(GameDataRequest&& request);
-	// Called on `owner`'s connection thread
-	void DispatchCompletedDataRequests(GameConnection& owner);
-
-	inline bool AnyConnectionsActive() const { return !m_ActiveConnections.empty(); }
-	inline int ActiveConnectionCount() const { return (int)m_ActiveConnections.size(); }
-
-	inline ActiveGameConnection& GetGameConnectionAt(int index) { return m_ActiveConnections[index]; }
-
-	// m_RecentError is written from a connection thread (CommonBehaviour's compat
-	// check) and read by the window thread when drawing, so it needs guarding too.
-	// Returned by value: handing out a reference to a string another thread may be
-	// reassigning is a use-after-free waiting to happen.
-	inline void PushError(std::string const& error)
-	{
-		std::lock_guard<std::mutex> lock(m_RecentErrorMutex);
-		m_RecentError = error;
-	}
-	inline void ClearRecentError()
-	{
-		std::lock_guard<std::mutex> lock(m_RecentErrorMutex);
-		m_RecentError.clear();
-	}
-	inline std::string GetRecentError() const
-	{
-		std::lock_guard<std::mutex> lock(m_RecentErrorMutex);
-		return m_RecentError;
-	}
-
-private:
-	void BackgroundUpdate(GameConnectionRef game);
-
-	mutable std::mutex m_RecentErrorMutex;
+	std::shared_ptr<IGameMemoryTransport> m_Transport;
+	std::optional<std::uint16_t> m_BridgePortOverride;
 	std::string m_RecentError;
-
-	std::mutex m_PendingDataRequestsMutex;
-	std::queue<GameDataRequest> m_PendingDataRequests;
-
-	std::mutex m_CompletedDataRequestsMutex;
-	std::queue<GameDataRequest> m_CompletedDataRequests;
-
+	std::string m_BridgeScriptPath;
+	std::string m_BridgeMessage;
+	std::uint16_t m_BridgePort = 30125;
+	bool m_UsesPortableBridge = false;
 	bool m_ListeningForConnections = false;
-
+	bool m_Started = false;
+	std::uint64_t m_NextConnectionId = 1;
 	std::vector<ActiveGameConnection> m_ActiveConnections;
 	GameConnectionRef m_AcceptingConnection;
 };

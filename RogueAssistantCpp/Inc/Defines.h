@@ -1,15 +1,13 @@
 #pragma once
 
-typedef unsigned __int8 u8;
-typedef unsigned __int16 u16;
-typedef unsigned __int32 u32;
-typedef unsigned __int64 u64;
+#include <cstdint>
 
-typedef __int8 s8;
-typedef __int16 s16;
-typedef __int32 s32;
-typedef __int64 s64;
+using u8 = std::uint8_t;
+using u16 = std::uint16_t;
+using u32 = std::uint32_t;
+using u64 = std::uint64_t;
 
-#define ARRAY_COUNT(arr) (size_t)(sizeof(arr) / sizeof((arr)[0]))
-
-#define IMGUI_SUPPORT 0
+using s8 = std::int8_t;
+using s16 = std::int16_t;
+using s32 = std::int32_t;
+using s64 = std::int64_t;

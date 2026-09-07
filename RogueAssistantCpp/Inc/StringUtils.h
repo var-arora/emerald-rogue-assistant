@@ -52,7 +52,7 @@ namespace strutil
     template<typename T>
     static inline T parse_string(const std::string& str)
     {
-        T result;
+        T result{};
         std::istringstream(str) >> result;
 
         return result;
@@ -61,7 +61,7 @@ namespace strutil
     template<typename T>
     static inline T parse_string_hex(const std::string& str)
     {
-        T result;
+        T result{};
         std::stringstream ss;
         ss << std::hex << str;
         ss >> result;

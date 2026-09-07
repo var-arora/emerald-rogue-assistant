@@ -1,116 +1,147 @@
-#include "UI\Window.h"
-#include "Assets.h"
+#include "UI/Window.h"
+#include "Defines.h"
+#include "Log.h"
+#include "Platform/ResourceLocator.h"
 
 #include <SFML/Graphics.hpp>
 #include <SFML/Window.hpp>
-#include <Windows.h>
+#include <SFML/Window/Clipboard.hpp>
 
-#include "Defines.h"
-#include "Log.h"
+#include <algorithm>
+#include <cstddef>
 
-
-Window::Window(WindowConfig const& config)
-    : m_Config(config)
+namespace
 {
+bool LoadWindowIcon(sf::Image& icon, std::filesystem::path const& resourceDirectory)
+{
+	if (!resourceDirectory.empty())
+	{
+		rogue::platform::ResourceLocator const resources(resourceDirectory);
+		return icon.loadFromFile(resources.Resolve(rogue::platform::Resource::Icon));
+	}
+	return false;
+}
+} // namespace
+
+Window::Window(WindowConfig const& config) : m_Config(config)
+{
+}
+
+Window::~Window()
+{
+	Destroy();
 }
 
 bool Window::Create()
 {
-    LOG_INFO("Creating Window");
+	LOG_INFO("Creating window");
+	unsigned int style = sf::Style::Titlebar | sf::Style::Close;
+	if (m_Config.resizable)
+		style |= sf::Style::Resize;
 
-    m_WindowHandle = new sf::RenderWindow();
-    m_WindowHandle->create(sf::VideoMode(m_Config.width, m_Config.height), m_Config.title);
-    m_WindowHandle->setVerticalSyncEnabled(true);
+	m_WindowHandle = std::make_unique<sf::RenderWindow>();
+	m_WindowHandle->create(
+		sf::VideoMode({static_cast<unsigned int>(m_Config.width), static_cast<unsigned int>(m_Config.height)}),
+		m_Config.title, style);
+	m_WindowHandle->setVerticalSyncEnabled(true);
 
-    sf::Image icon;
-    icon.loadFromMemory(bin2cpp::getWobbuffetImagePngFile().getBuffer(), bin2cpp::getWobbuffetImagePngFile().getSize());
-    m_WindowHandle->setIcon(icon.getSize().x, icon.getSize().y, icon.getPixelsPtr());
-
-    return true;
+	sf::Image icon;
+	if (LoadWindowIcon(icon, m_Config.resourceDirectory))
+		m_WindowHandle->setIcon(icon);
+	else
+		LOG_WARN("Cannot load the Emerald Rogue Assistant window icon");
+	return m_WindowHandle->isOpen();
 }
 
 bool Window::Destroy()
 {
-    if (m_WindowHandle != nullptr)
-    {
-        m_WindowHandle->close();
-        delete m_WindowHandle;
-        m_WindowHandle = nullptr;
-    }
-    return true;
+	if (m_WindowHandle)
+	{
+		m_WindowHandle->close();
+		m_WindowHandle.reset();
+	}
+	return true;
 }
 
-void Window::EnterMainLoop(WindowCallback callback, void* userData)
+void Window::EnterMainLoop(WindowCallback const& callback, void* userData)
 {
-    if (m_WindowHandle == nullptr)
-    {
-        ASSERT_FAIL("Window not created yet");
-        return;
-    }
+	if (!m_WindowHandle)
+	{
+		ASSERT_FAIL("Window not created yet");
+		return;
+	}
 
-    bool continueLoop = true;
+	bool continueLoop = true;
+	bool firstFrame = true;
+	while (m_WindowHandle->isOpen() && continueLoop)
+	{
+		m_HadVisualEvent = firstFrame;
+		firstFrame = false;
+		m_PreviousKeyStates = m_CurrentKeyStates;
 
-    while (m_WindowHandle->isOpen() && continueLoop)
-    {
-        m_PreviousKeyStates = m_CurrentKeyStates;
+		while (auto const event = m_WindowHandle->pollEvent())
+		{
+			if (event->is<sf::Event::Resized>() || event->is<sf::Event::FocusGained>() ||
+				event->is<sf::Event::KeyPressed>() || event->is<sf::Event::KeyReleased>() ||
+				event->is<sf::Event::TextEntered>())
+			{
+				m_HadVisualEvent = true;
+			}
+			if (auto const* keyPressed = event->getIf<sf::Event::KeyPressed>();
+				keyPressed != nullptr && keyPressed->code != sf::Keyboard::Key::Unknown)
+			{
+				m_CurrentKeyStates.set(static_cast<std::size_t>(keyPressed->code), true);
+			}
+			if (auto const* keyReleased = event->getIf<sf::Event::KeyReleased>();
+				keyReleased != nullptr && keyReleased->code != sf::Keyboard::Key::Unknown)
+			{
+				m_CurrentKeyStates.set(static_cast<std::size_t>(keyReleased->code), false);
+			}
 
-        sf::Event sfEvent;
-        while (m_WindowHandle->pollEvent(sfEvent))
-        {
-            if (sfEvent.type == sf::Event::KeyPressed && sfEvent.key.code != sf::Keyboard::Unknown)
-                m_CurrentKeyStates.set(sfEvent.key.code, true);
+			if (auto const* textEntered = event->getIf<sf::Event::TextEntered>();
+				textEntered != nullptr && textEntered->unicode < 128)
+			{
+				if (textEntered->unicode == 8)
+				{
+					if (!m_TextEntered.empty())
+						m_TextEntered.pop_back();
+				}
+				else if (textEntered->unicode == 22)
+				{
+					std::string const clipboard = sf::Clipboard::getString().toAnsiString();
+					std::size_t const available = 256U - std::min<std::size_t>(m_TextEntered.size(), 256U);
+					m_TextEntered.append(clipboard, 0, std::min(clipboard.size(), available));
+				}
+				else if (textEntered->unicode == 1)
+				{
+					m_TextEntered.clear();
+				}
+				else if (textEntered->unicode >= 0x20)
+				{
+					m_TextEntered += static_cast<char>(textEntered->unicode);
+				}
+			}
 
-            if (sfEvent.type == sf::Event::KeyReleased && sfEvent.key.code != sf::Keyboard::Unknown)
-                m_CurrentKeyStates.set(sfEvent.key.code, false);
+			if (event->is<sf::Event::Closed>() && m_Config.canBeDestroyed)
+				continueLoop = false;
+		}
 
-            if (sfEvent.type == sf::Event::TextEntered && sfEvent.text.unicode < 128)
-            {
-                if (sfEvent.text.unicode == 8) // backspace
-                {
-                    if (!m_TextEntered.empty())
-                        m_TextEntered = m_TextEntered.substr(0, m_TextEntered.size() - 1);
-                }
-                else if (sfEvent.text.unicode >= 1 && sfEvent.text.unicode <= 26) // ctrl + ?
-                {
-                    if (sfEvent.text.unicode == 22) // ctrl + v
-                    {
-                        if (OpenClipboard(NULL))
-                        {
-                            HANDLE h = GetClipboardData(CF_TEXT);
-                            char* textPtr = (char*)h;
+		if (!continueLoop)
+			break;
+		switch (callback(this, userData))
+		{
+		case WindowFrame::Rendered:
+			m_WindowHandle->display();
+			break;
+		case WindowFrame::Idle:
+			// Keep input responsive without submitting unchanged frames to OpenGL.
+			sf::sleep(sf::milliseconds(8));
+			break;
+		case WindowFrame::Close:
+			continueLoop = false;
+			break;
+		}
+	}
 
-                            if (textPtr != nullptr)
-                            {
-                                // Limit to specific character limit just for ease
-                                for (int i = 0; i < 256 && textPtr[i] != 0; ++i)
-                                    m_TextEntered += textPtr[i];
-                            }
-
-                            CloseClipboard();
-                        }
-                    }
-                    else if (sfEvent.text.unicode == 1) // ctrl + a
-                    {
-                        // breakig the rules just to make it easy to delete all the text
-                        m_TextEntered = "";
-                    }
-                }
-                else
-                    m_TextEntered += static_cast<char>(sfEvent.text.unicode);
-            }
-
-            // "close requested" event: we close the window
-            if (sfEvent.type == sf::Event::Closed && m_Config.canBeDestroyed)
-                continueLoop = false;
-        }
-                
-        m_WindowHandle->clear();
-
-        if(!callback(this, userData))
-            continueLoop = false;
-
-        m_WindowHandle->display();
-    }
-
-    Destroy();
+	// The caller stops the session worker before this Window leaves scope.
 }
