@@ -195,8 +195,5 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-Catch2 3.15.3 is used only for tests under the Boost Software License 1.0. The
-Linux release uses linuxdeploy `1-alpha-20251107-1` only as a packaging tool;
-linuxdeploy is licensed GPL-3.0-or-later and is not included in Emerald Rogue Assistant
-artifacts. Their authoritative license texts remain in their checksum-pinned
-source/tool distributions.
+Catch2 3.15.3 is used only for tests under the Boost Software License 1.0.
+Its license text remains in the checksum-pinned source distribution.

@@ -29,8 +29,7 @@ version; that would leave the version inside the app unchanged.
 
 - `RogueAssistant-<build>-windows-x64.exe`
 - `RogueAssistant-<build>-macos-arm64.dmg`
-- `RogueAssistant-<build>-linux-x86_64.AppImage`
-- `RogueAssistant-<build>-linux-x86_64.tar.gz`
+- `RogueAssistant-<build>-linux-x86_64.flatpak`
 - `THIRD_PARTY_NOTICES.md`
 - `SHA256SUMS`
 
@@ -39,7 +38,8 @@ Applications shortcut. Third-party notices and dependency licenses are inside
 the app, under `Contents/Resources/Documentation`. Guides stay in the
 repository. There is no separate macOS app ZIP.
 The Windows installer keeps notices and licenses in the app's `Documentation`
-folder. The Linux archive also includes the guides.
+folder. The Linux Flatpak keeps them under `/app/share/doc/RogueAssistant`
+inside its installation. Each system has one download format.
 
 ## Local package builds
 
@@ -67,19 +67,18 @@ ctest --preset release-macos-arm64
 bash packaging/macos/package.sh build/release-macos-arm64 dist
 ```
 
-On Linux:
+On Linux, install Flatpak, then run:
 
 ```sh
-cmake --preset release-linux-x86_64 --fresh -G Ninja
-cmake --build --preset release-linux-x86_64 --parallel
-ctest --preset release-linux-x86_64
-cpack --preset release-linux-x86_64
+bash packaging/linux/build-flatpak.sh dist
 ```
 
-The Linux AppImage also needs the x86_64 linuxdeploy build named
-`1-alpha-20251107-1`. Its SHA-256 value is
-`c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d`.
-The GitHub workflow downloads and checks this exact file.
+The script installs the Freedesktop 25.08 runtime and SDK from Flathub for your
+account. It builds and tests the app inside that SDK, then creates the Flatpak
+installer. Set `ROGUE_RELEASE_TAG` to build a named release; leave it unset for
+a development build. The installed app has network access for mGBA and
+multiplayer, and graphics access for its window. It has no general access to
+the user's home folder.
 
 All release presets treat project warnings as errors. The macOS preset targets
 macOS 11 and builds only arm64. Check the result with:

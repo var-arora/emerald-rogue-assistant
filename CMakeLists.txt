@@ -207,26 +207,6 @@ set(
     RogueAssistantCpp/Assets/RogueAssistant_mGBA.lua
 )
 
-set(
-    ROGUE_ROOT_DOCUMENT_FILES
-    README.md
-    THIRD_PARTY_NOTICES.md
-)
-
-set(
-    ROGUE_GUIDE_DOCUMENT_FILES
-    docs/architecture.md
-    docs/bridge-protocol.md
-    docs/development.md
-    docs/home-box-format.md
-    docs/installation.md
-    docs/multiplayer-protocol.md
-    docs/release.md
-    docs/troubleshooting.md
-)
-
-set(ROGUE_DOCUMENT_FILES ${ROGUE_ROOT_DOCUMENT_FILES} ${ROGUE_GUIDE_DOCUMENT_FILES})
-
 if(ROGUE_BUILD_DESKTOP)
     set(ROGUE_DESKTOP_SOURCES)
     if(WIN32)
@@ -357,13 +337,8 @@ if(ROGUE_BUILD_DESKTOP)
         install(FILES ${ROGUE_DEPENDENCY_LICENSE_FILES} DESTINATION Documentation/licenses COMPONENT RogueAssistant)
     elseif(NOT APPLE)
         install(
-            FILES ${ROGUE_ROOT_DOCUMENT_FILES}
+            FILES THIRD_PARTY_NOTICES.md
             DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/RogueAssistant
-            COMPONENT RogueAssistant
-        )
-        install(
-            FILES ${ROGUE_GUIDE_DOCUMENT_FILES}
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/RogueAssistant/docs
             COMPONENT RogueAssistant
         )
         install(
@@ -374,6 +349,17 @@ if(ROGUE_BUILD_DESKTOP)
     endif()
 
     if(UNIX AND NOT APPLE)
+        string(TIMESTAMP ROGUE_PACKAGE_DATE "%Y-%m-%d" UTC)
+        configure_file(
+            packaging/linux/${ROGUE_ASSISTANT_APPLICATION_ID}.metainfo.xml.in
+            generated/${ROGUE_ASSISTANT_APPLICATION_ID}.metainfo.xml
+            @ONLY
+        )
+        install(
+            FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/${ROGUE_ASSISTANT_APPLICATION_ID}.metainfo.xml
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
+            COMPONENT RogueAssistant
+        )
         install(
             FILES packaging/linux/${ROGUE_ASSISTANT_APPLICATION_ID}.desktop
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications

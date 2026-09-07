@@ -58,22 +58,10 @@ set(
   ${document_directory}/licenses/SheenBidi.txt
 )
 if(ROGUE_INSTALL_PLATFORM STREQUAL "linux")
-  list(APPEND required_files
-    ${document_directory}/README.md
-    ${document_directory}/docs/architecture.md
-    ${document_directory}/docs/bridge-protocol.md
-    ${document_directory}/docs/development.md
-    ${document_directory}/docs/home-box-format.md
-    ${document_directory}/docs/installation.md
-    ${document_directory}/docs/multiplayer-protocol.md
-    ${document_directory}/docs/release.md
-    ${document_directory}/docs/troubleshooting.md
-  )
-endif()
-if(ROGUE_INSTALL_PLATFORM STREQUAL "linux")
   list(
     APPEND
     required_files
+    ${ROGUE_INSTALL_ROOT}/share/metainfo/assistant.emerald.rogue.metainfo.xml
     ${ROGUE_INSTALL_ROOT}/share/applications/assistant.emerald.rogue.desktop
     ${ROGUE_INSTALL_ROOT}/share/icons/hicolor/128x128/apps/assistant.emerald.rogue.png
   )
@@ -84,28 +72,7 @@ foreach(required_file IN LISTS required_files)
   endif()
 endforeach()
 
-if(NOT ROGUE_INSTALL_PLATFORM STREQUAL "linux")
-  verify_directory_inventory("${document_directory}" THIRD_PARTY_NOTICES.md licenses)
-else()
-  verify_directory_inventory(
-    "${document_directory}"
-    README.md
-    THIRD_PARTY_NOTICES.md
-    docs
-    licenses
-  )
-  verify_directory_inventory(
-    "${document_directory}/docs"
-    architecture.md
-    bridge-protocol.md
-    development.md
-    home-box-format.md
-    installation.md
-    multiplayer-protocol.md
-    release.md
-    troubleshooting.md
-  )
-endif()
+verify_directory_inventory("${document_directory}" THIRD_PARTY_NOTICES.md licenses)
 verify_directory_inventory(
   "${document_directory}/licenses"
   ENet.txt

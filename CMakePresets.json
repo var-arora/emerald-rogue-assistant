@@ -200,14 +200,5 @@
         "outputOnFailure": true
       }
     }
-  ],
-  "packagePresets": [
-    {
-      "name": "release-linux-x86_64",
-      "configurePreset": "release-linux-x86_64",
-      "generators": [
-        "TGZ"
-      ]
-    }
   ]
 }

@@ -215,73 +215,29 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/rogue-release.keychain-db" || true
 
   linux:
-    name: Linux x86_64 packages
+    name: Linux x86_64 Flatpak
     needs: metadata
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install desktop dependencies
-        run: >-
-          sudo apt-get update && sudo apt-get install --yes
-          libfreetype6-dev libfuse2 libgl1-mesa-dev libudev-dev libx11-dev
-          libxcursor-dev libxext-dev libxi-dev libxrandr-dev
-      - name: Configure
-        run: cmake --preset release-linux-x86_64 --fresh -G Ninja -DROGUE_RELEASE_TAG="$ROGUE_RELEASE_TAG"
-      - name: Build
-        run: cmake --build --preset release-linux-x86_64 --parallel
-      - name: Test
-        run: ctest --preset release-linux-x86_64 --output-on-failure
-      - name: Verify installed application
+      - name: Install Flatpak and desktop test tools
         run: |
-          stage="$RUNNER_TEMP/rogue-install"
-          cmake --install build/release-linux-x86_64 \
-            --prefix "$stage" \
-            --component RogueAssistant \
-            --strip
-          cmake \
-            -DROGUE_INSTALL_ROOT="$stage" \
-            -DROGUE_INSTALL_PLATFORM=linux \
-            -DROGUE_EXPECTED_VERSION=${{ needs.metadata.outputs.version }} \
-            -P cmake/VerifyInstall.cmake
-      - name: Package tar archive
-        run: cpack --preset release-linux-x86_64
-      - name: Download checksum-pinned linuxdeploy
+          sudo apt-get update
+          sudo apt-get install --yes flatpak gir1.2-flatpak-1.0 python3-gi dbus-x11 xvfb
+      - name: Build and test Flatpak
+        run: dbus-run-session -- bash packaging/linux/build-flatpak.sh dist
+      - name: Test installation and removal
         run: |
-          curl --fail --location --retry 3 \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage \
-            --output "$RUNNER_TEMP/linuxdeploy-x86_64.AppImage"
-          echo "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  $RUNNER_TEMP/linuxdeploy-x86_64.AppImage" \
-            | sha256sum --check
-          chmod +x "$RUNNER_TEMP/linuxdeploy-x86_64.AppImage"
-      - name: Package AppImage
-        run: >-
-          bash packaging/linux/build-appimage.sh
-          build/release-linux-x86_64
-          dist
-          "$RUNNER_TEMP/linuxdeploy-x86_64.AppImage"
-      - name: Check and stage package files
-        run: |
-          archive="build/release-linux-x86_64/packages/RogueAssistant-${{ needs.metadata.outputs.build_label }}-linux-x86_64.tar.gz"
-          test -f "$archive"
-          test -x "dist/RogueAssistant-${{ needs.metadata.outputs.build_label }}-linux-x86_64.AppImage"
-          extract="$RUNNER_TEMP/rogue-package"
-          cmake -E rm -rf "$extract"
-          cmake -E make_directory "$extract"
-          tar -xzf "$archive" -C "$extract"
-          cmake \
-            -DROGUE_INSTALL_ROOT="$extract" \
-            -DROGUE_INSTALL_PLATFORM=linux \
-            -DROGUE_EXPECTED_VERSION=${{ needs.metadata.outputs.version }} \
-            -P cmake/VerifyInstall.cmake
-          cp "$archive" "dist/RogueAssistant-${{ needs.metadata.outputs.build_label }}-linux-x86_64.tar.gz"
-      - name: Upload Linux packages
+          dbus-run-session -- xvfb-run -a bash packaging/linux/verify-flatpak.sh \
+            "dist/RogueAssistant-${{ needs.metadata.outputs.build_label }}-linux-x86_64.flatpak" \
+            "${{ needs.metadata.outputs.version }}"
+      - name: Upload Linux installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-x86_64
           if-no-files-found: error
-          path: |
-            dist/RogueAssistant-${{ needs.metadata.outputs.build_label }}-linux-x86_64.tar.gz
-            dist/RogueAssistant-${{ needs.metadata.outputs.build_label }}-linux-x86_64.AppImage
+          path: dist/RogueAssistant-${{ needs.metadata.outputs.build_label }}-linux-x86_64.flatpak
 
   assemble:
     name: Checksums
@@ -300,7 +256,7 @@ jobs:
         with:
           name: windows-x64
           path: dist
-      - name: Download Linux packages
+      - name: Download Linux installer
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: linux-x86_64
@@ -317,8 +273,7 @@ jobs:
           artifacts=(
             "RogueAssistant-$build_label-windows-x64.exe"
             "RogueAssistant-$build_label-macos-arm64.dmg"
-            "RogueAssistant-$build_label-linux-x86_64.AppImage"
-            "RogueAssistant-$build_label-linux-x86_64.tar.gz"
+            "RogueAssistant-$build_label-linux-x86_64.flatpak"
           )
           for artifact in "${artifacts[@]}"; do
             if [[ ! -s "dist/$artifact" ]]; then
