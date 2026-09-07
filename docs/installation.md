@@ -31,7 +31,7 @@ a version such as `1.0.0-alpha.0`.
 On Windows PowerShell:
 
 ```powershell
-Get-FileHash '.\RogueAssistant-<build>-windows-x64.zip' -Algorithm SHA256
+Get-FileHash '.\RogueAssistant-<build>-windows-x64.exe' -Algorithm SHA256
 ```
 
 On macOS:
@@ -51,11 +51,21 @@ file if the values differ.
 
 ## Windows
 
-Extract `RogueAssistant-<build>-windows-x64.zip` to a folder where you can
-write files. Run `bin\RogueAssistant.exe`.
+Open `RogueAssistant-<build>-windows-x64.exe` and follow the setup steps. Then
+open **Emerald Rogue Assistant** from the Start menu. If you downloaded a
+development build from GitHub Actions, first extract its ZIP to get the installer.
 
-Keep `bin\resources` beside `bin\RogueAssistant.exe`. Do not move the `.exe`
-file without that folder.
+Setup installs the app for your Windows account without asking for
+administrator access. The default folder is
+`%LOCALAPPDATA%\Programs\Emerald Rogue Assistant`.
+
+To update the app, close it and run the new installer. Leave Extended Storage
+in the game and finish any transfer before closing the assistant. Setup keeps
+your settings and Home Box files.
+
+These Windows builds do not have a verified publisher signature. Windows may
+show a security warning. Check that you downloaded the installer from this
+repository before choosing to run it.
 
 ## macOS
 
@@ -165,9 +175,12 @@ data folder does not exist. It does not remove the old files.
 
 ## Remove the app
 
-Delete the app or the extracted package. User files remain in the folders
-listed above. Back up any Home Box files that you want to keep before you
-delete those folders.
+On Windows, open **Settings > Apps**, select **Emerald Rogue Assistant**, and
+choose **Uninstall**. On macOS, move the app from Applications to the Trash.
+On Linux, delete the AppImage or extracted package.
+
+User files remain in the folders listed above. Back up any Home Box files
+that you want to keep before you delete those folders.
 
 ## Move Home Box data
 

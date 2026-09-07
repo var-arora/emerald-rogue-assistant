@@ -43,6 +43,10 @@ elseif(ROGUE_PACKAGE_PLATFORM STREQUAL "linux-x86_64")
   endif()
 endif()
 
+if(WIN32)
+  return()
+endif()
+
 set(CPACK_PACKAGE_NAME RogueAssistant)
 set(CPACK_PACKAGE_VENDOR "Emerald Rogue Assistant Project")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY ${PROJECT_DESCRIPTION})
@@ -56,9 +60,7 @@ set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
 set(CPACK_COMPONENT_ROGUEASSISTANT_DISPLAY_NAME "${ROGUE_ASSISTANT_DISPLAY_NAME}")
 set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
 
-if(WIN32)
-  set(CPACK_GENERATOR ZIP)
-elseif(APPLE)
+if(APPLE)
   # Releases use the DMG from package.sh. This archive is for local install checks.
   set(CPACK_GENERATOR ZIP)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")

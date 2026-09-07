@@ -58,6 +58,7 @@ jobs:
     name: Windows x64 package
     needs: metadata
     runs-on: windows-2022
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure MSVC environment
@@ -84,41 +85,28 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Installed application verification failed"
           }
-          $dependencies = & dumpbin /DEPENDENTS "$stage/bin/RogueAssistant.exe" | Out-String
+          $dependencies = & dumpbin /DEPENDENTS "$stage/RogueAssistant.exe" | Out-String
           if ($LASTEXITCODE -ne 0) {
             throw "dumpbin failed while inspecting the packaged executable"
           }
           if ($dependencies -match '(?i)\b(?:vcruntime|msvcp|ucrtbased?)\d*\.dll\b') {
             throw "Windows package unexpectedly depends on the dynamic MSVC runtime`n$dependencies"
           }
-      - name: Package ZIP
-        run: cpack --preset release-windows-x64
-      - name: Check package name
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./packaging/windows/package.ps1 build/release-windows-x64 dist
+      - name: Test installation and removal
         shell: pwsh
         run: |
-          $package = "build/release-windows-x64/packages/RogueAssistant-${{ needs.metadata.outputs.build_label }}-windows-x64.zip"
-          if (-not (Test-Path $package -PathType Leaf)) {
-            throw "Expected package was not created: $package"
-          }
-          $extract = Join-Path $env:RUNNER_TEMP "rogue-package"
-          if (Test-Path $extract) {
-            Remove-Item -Recurse -Force $extract
-          }
-          Expand-Archive -LiteralPath $package -DestinationPath $extract
-          cmake `
-            "-DROGUE_INSTALL_ROOT=$extract" `
-            "-DROGUE_INSTALL_PLATFORM=windows" `
-            "-DROGUE_EXPECTED_VERSION=${{ needs.metadata.outputs.version }}" `
-            -P cmake/VerifyInstall.cmake
-          if ($LASTEXITCODE -ne 0) {
-            throw "Packaged application verification failed"
-          }
-      - name: Upload Windows package
+          ./packaging/windows/verify-installer.ps1 `
+            -Installer "dist/RogueAssistant-${{ needs.metadata.outputs.build_label }}-windows-x64.exe" `
+            -Version "${{ needs.metadata.outputs.version }}"
+      - name: Upload Windows installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-x64
           if-no-files-found: error
-          path: build/release-windows-x64/packages/RogueAssistant-${{ needs.metadata.outputs.build_label }}-windows-x64.zip
+          path: dist/RogueAssistant-${{ needs.metadata.outputs.build_label }}-windows-x64.exe
 
   macos:
     name: macOS arm64 package
@@ -327,7 +315,7 @@ jobs:
         run: |
           build_label="${{ needs.metadata.outputs.build_label }}"
           artifacts=(
-            "RogueAssistant-$build_label-windows-x64.zip"
+            "RogueAssistant-$build_label-windows-x64.exe"
             "RogueAssistant-$build_label-macos-arm64.dmg"
             "RogueAssistant-$build_label-linux-x86_64.AppImage"
             "RogueAssistant-$build_label-linux-x86_64.tar.gz"

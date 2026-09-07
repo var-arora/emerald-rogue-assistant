@@ -15,7 +15,7 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RogueAssistant-build.txt"
     CONTENT "${ROGUE_ASSISTANT_VERSION}\n${ROGUE_ASSISTANT_BUILD_LABEL}\n")
 
 if(MSVC)
-    # Use the static runtime so the ZIP works without a separate Visual C++
+    # Use the static runtime so the app works without a separate Visual C++
     # Redistributable install.
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
@@ -321,6 +321,10 @@ if(ROGUE_BUILD_DESKTOP)
         )
         install(TARGETS RogueAssistant BUNDLE DESTINATION . COMPONENT RogueAssistant)
     else()
+        set(ROGUE_INSTALL_BIN_DIRECTORY ${CMAKE_INSTALL_BINDIR})
+        if(WIN32)
+            set(ROGUE_INSTALL_BIN_DIRECTORY .)
+        endif()
         add_custom_command(
             TARGET RogueAssistant
             POST_BUILD
@@ -338,17 +342,20 @@ if(ROGUE_BUILD_DESKTOP)
         endforeach()
         install(
             TARGETS RogueAssistant
-            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            RUNTIME DESTINATION ${ROGUE_INSTALL_BIN_DIRECTORY}
             COMPONENT RogueAssistant
         )
         install(
             FILES ${ROGUE_RESOURCE_FILES}
-            DESTINATION ${CMAKE_INSTALL_BINDIR}/resources
+            DESTINATION ${ROGUE_INSTALL_BIN_DIRECTORY}/resources
             COMPONENT RogueAssistant
         )
     endif()
 
-    if(NOT APPLE)
+    if(WIN32)
+        install(FILES THIRD_PARTY_NOTICES.md DESTINATION Documentation COMPONENT RogueAssistant)
+        install(FILES ${ROGUE_DEPENDENCY_LICENSE_FILES} DESTINATION Documentation/licenses COMPONENT RogueAssistant)
+    elseif(NOT APPLE)
         install(
             FILES ${ROGUE_ROOT_DOCUMENT_FILES}
             DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/RogueAssistant

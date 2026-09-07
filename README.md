@@ -34,7 +34,7 @@ format and can be moved between the apps; see
 ## Get started
 
 1. Download the package for your system from
-   [GitHub Releases](https://github.com/avarun42/emerald-rogue-assistant/releases).
+   [GitHub Releases](https://github.com/var-arora/emerald-rogue-assistant/releases).
 2. Follow the steps in [Install Emerald Rogue Assistant](docs/installation.md).
 3. Start Emerald Rogue Assistant.
 4. Open Emerald Rogue in mGBA.

@@ -8,8 +8,9 @@ foreach(required_variable IN ITEMS
 endforeach()
 
 if(ROGUE_INSTALL_PLATFORM STREQUAL "windows")
-  set(executable ${ROGUE_INSTALL_ROOT}/bin/RogueAssistant.exe)
-  set(resource_directory ${ROGUE_INSTALL_ROOT}/bin/resources)
+  set(executable ${ROGUE_INSTALL_ROOT}/RogueAssistant.exe)
+  set(resource_directory ${ROGUE_INSTALL_ROOT}/resources)
+  set(document_directory ${ROGUE_INSTALL_ROOT}/Documentation)
 elseif(ROGUE_INSTALL_PLATFORM STREQUAL "macos")
   set(executable ${ROGUE_INSTALL_ROOT}/RogueAssistant.app/Contents/MacOS/RogueAssistant)
   set(resource_directory ${ROGUE_INSTALL_ROOT}/RogueAssistant.app/Contents/Resources)
@@ -56,7 +57,7 @@ set(
   ${document_directory}/licenses/HarfBuzz.txt
   ${document_directory}/licenses/SheenBidi.txt
 )
-if(NOT ROGUE_INSTALL_PLATFORM STREQUAL "macos")
+if(ROGUE_INSTALL_PLATFORM STREQUAL "linux")
   list(APPEND required_files
     ${document_directory}/README.md
     ${document_directory}/docs/architecture.md
@@ -83,7 +84,7 @@ foreach(required_file IN LISTS required_files)
   endif()
 endforeach()
 
-if(ROGUE_INSTALL_PLATFORM STREQUAL "macos")
+if(NOT ROGUE_INSTALL_PLATFORM STREQUAL "linux")
   verify_directory_inventory("${document_directory}" THIRD_PARTY_NOTICES.md licenses)
 else()
   verify_directory_inventory(

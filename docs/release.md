@@ -27,7 +27,7 @@ Package names are generated automatically. In this list, `<build>` is the
 release version or development label. Do not rename packages to change their
 version; that would leave the version inside the app unchanged.
 
-- `RogueAssistant-<build>-windows-x64.zip`
+- `RogueAssistant-<build>-windows-x64.exe`
 - `RogueAssistant-<build>-macos-arm64.dmg`
 - `RogueAssistant-<build>-linux-x86_64.AppImage`
 - `RogueAssistant-<build>-linux-x86_64.tar.gz`
@@ -38,20 +38,21 @@ The macOS DMG has a compact drag-to-install window with the app and an
 Applications shortcut. Third-party notices and dependency licenses are inside
 the app, under `Contents/Resources/Documentation`. Guides stay in the
 repository. There is no separate macOS app ZIP.
-Windows and Linux packages also include the notices, licenses, and guides.
+The Windows installer keeps notices and licenses in the app's `Documentation`
+folder. The Linux archive also includes the guides.
 
 ## Local package builds
 
 Use only the preset for the current system. Each preset is a saved set of
 build options. These commands also require Ninja, the tool that runs the build.
 
-On Windows:
+On Windows, install Inno Setup 6.3 or later and use PowerShell 7:
 
 ```sh
 cmake --preset release-windows-x64 --fresh -G Ninja
 cmake --build --preset release-windows-x64 --parallel
 ctest --preset release-windows-x64
-cpack --preset release-windows-x64
+./packaging/windows/package.ps1 build/release-windows-x64 dist
 ```
 
 On macOS:
