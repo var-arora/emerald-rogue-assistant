@@ -294,12 +294,8 @@ if(ROGUE_BUILD_DESKTOP)
             PROPERTIES MACOSX_PACKAGE_LOCATION Resources
         )
         set_source_files_properties(
-            ${ROGUE_ROOT_DOCUMENT_FILES}
+            THIRD_PARTY_NOTICES.md
             PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Documentation
-        )
-        set_source_files_properties(
-            ${ROGUE_GUIDE_DOCUMENT_FILES}
-            PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Documentation/docs
         )
         set_source_files_properties(
             ${ROGUE_DEPENDENCY_LICENSE_FILES}
@@ -315,7 +311,7 @@ if(ROGUE_BUILD_DESKTOP)
             RogueAssistant
             PRIVATE
                 ${ROGUE_RESOURCE_FILES}
-                ${ROGUE_DOCUMENT_FILES}
+                THIRD_PARTY_NOTICES.md
                 ${ROGUE_DEPENDENCY_LICENSE_FILES}
                 ${ROGUE_MACOS_ICON}
         )

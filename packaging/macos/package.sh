@@ -61,8 +61,6 @@ if [[ "$(lipo -archs "$executable")" != arm64 ]]; then
   exit 1
 fi
 
-ln -s /Applications "$stage_root/Applications"
-
 signing_identity="${APPLE_SIGNING_IDENTITY:-}"
 apple_id="${APPLE_ID:-}"
 apple_team_id="${APPLE_TEAM_ID:-}"
@@ -106,12 +104,10 @@ if [[ $notary_value_count -eq 3 ]]; then
   cmake -E rm -f "$notary_zip"
 fi
 
-hdiutil create \
-  -quiet \
-  -format UDZO \
-  -fs HFS+ \
-  -volname "Emerald Rogue Assistant $build_label" \
-  -srcfolder "$stage_root" \
+python3 -m dmgbuild \
+  -s "$script_dir/dmg-settings.py" \
+  -D "app=$app" \
+  "Emerald Rogue Assistant $build_label" \
   "$dmg_output"
 
 if [[ -n "$signing_identity" ]]; then
@@ -147,6 +143,7 @@ for entry in "$dmg_verify_root"/*; do
   esac
 done
 test "$(readlink "$dmg_verify_root/Applications")" = /Applications
+python3 "$script_dir/verify-layout.py" "$dmg_verify_root"
 cmake \
   "-DROGUE_INSTALL_ROOT=$dmg_verify_root" \
   -DROGUE_INSTALL_PLATFORM=macos \

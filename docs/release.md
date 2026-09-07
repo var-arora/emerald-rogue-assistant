@@ -34,9 +34,10 @@ version; that would leave the version inside the app unchanged.
 - `THIRD_PARTY_NOTICES.md`
 - `SHA256SUMS`
 
-The macOS DMG contains the app and an Applications shortcut. Third-party
-notices, dependency licenses, and guides are inside the app, under
-`Contents/Resources/Documentation`. There is no separate macOS app ZIP.
+The macOS DMG has a compact drag-to-install window with the app and an
+Applications shortcut. Third-party notices and dependency licenses are inside
+the app, under `Contents/Resources/Documentation`. Guides stay in the
+repository. There is no separate macOS app ZIP.
 Windows and Linux packages also include the notices, licenses, and guides.
 
 ## Local package builds
@@ -56,6 +57,9 @@ cpack --preset release-windows-x64
 On macOS:
 
 ```sh
+python3 -m venv build/packaging-tools
+build/packaging-tools/bin/python -m pip install --require-hashes --only-binary=:all: -r packaging/macos/requirements.txt
+source build/packaging-tools/bin/activate
 cmake --preset release-macos-arm64 --fresh -G Ninja
 cmake --build --preset release-macos-arm64 --parallel
 ctest --preset release-macos-arm64

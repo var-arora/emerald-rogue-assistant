@@ -49,22 +49,26 @@ set(
   ${resource_directory}/poketch_frame.png
   ${resource_directory}/pokemon-emerald-pro.ttf
   ${resource_directory}/RogueAssistant_mGBA.lua
-  ${document_directory}/README.md
   ${document_directory}/THIRD_PARTY_NOTICES.md
-  ${document_directory}/docs/architecture.md
-  ${document_directory}/docs/bridge-protocol.md
-  ${document_directory}/docs/development.md
-  ${document_directory}/docs/home-box-format.md
-  ${document_directory}/docs/installation.md
-  ${document_directory}/docs/multiplayer-protocol.md
-  ${document_directory}/docs/release.md
-  ${document_directory}/docs/troubleshooting.md
   ${document_directory}/licenses/SFML.txt
   ${document_directory}/licenses/ENet.txt
   ${document_directory}/licenses/FreeType.txt
   ${document_directory}/licenses/HarfBuzz.txt
   ${document_directory}/licenses/SheenBidi.txt
 )
+if(NOT ROGUE_INSTALL_PLATFORM STREQUAL "macos")
+  list(APPEND required_files
+    ${document_directory}/README.md
+    ${document_directory}/docs/architecture.md
+    ${document_directory}/docs/bridge-protocol.md
+    ${document_directory}/docs/development.md
+    ${document_directory}/docs/home-box-format.md
+    ${document_directory}/docs/installation.md
+    ${document_directory}/docs/multiplayer-protocol.md
+    ${document_directory}/docs/release.md
+    ${document_directory}/docs/troubleshooting.md
+  )
+endif()
 if(ROGUE_INSTALL_PLATFORM STREQUAL "linux")
   list(
     APPEND
@@ -79,24 +83,28 @@ foreach(required_file IN LISTS required_files)
   endif()
 endforeach()
 
-verify_directory_inventory(
-  "${document_directory}"
-  README.md
-  THIRD_PARTY_NOTICES.md
-  docs
-  licenses
-)
-verify_directory_inventory(
-  "${document_directory}/docs"
-  architecture.md
-  bridge-protocol.md
-  development.md
-  home-box-format.md
-  installation.md
-  multiplayer-protocol.md
-  release.md
-  troubleshooting.md
-)
+if(ROGUE_INSTALL_PLATFORM STREQUAL "macos")
+  verify_directory_inventory("${document_directory}" THIRD_PARTY_NOTICES.md licenses)
+else()
+  verify_directory_inventory(
+    "${document_directory}"
+    README.md
+    THIRD_PARTY_NOTICES.md
+    docs
+    licenses
+  )
+  verify_directory_inventory(
+    "${document_directory}/docs"
+    architecture.md
+    bridge-protocol.md
+    development.md
+    home-box-format.md
+    installation.md
+    multiplayer-protocol.md
+    release.md
+    troubleshooting.md
+  )
+endif()
 verify_directory_inventory(
   "${document_directory}/licenses"
   ENet.txt

@@ -62,7 +62,8 @@ file without that folder.
 Open `RogueAssistant-<build>-macos-arm64.dmg`. Drag
 `RogueAssistant.app` to Applications.
 
-The DMG contains the app and an Applications shortcut. If you downloaded a
+The DMG opens a small window with the app on the left and Applications on the
+right. Drag the app to Applications. If you downloaded a
 development build from GitHub Actions, first extract its ZIP and open the DMG
 inside. Downloads from GitHub Releases provide the DMG directly.
 

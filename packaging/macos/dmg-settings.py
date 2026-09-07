@@ -1,0 +1,16 @@
+files = [defines["app"]]
+symlinks = {"Applications": "/Applications"}
+format = "UDZO"
+filesystem = "HFS+"
+background = "builtin-arrow"
+window_rect = ((100, 100), (640, 320))
+icon_locations = {"RogueAssistant.app": (160, 120), "Applications": (480, 120)}
+icon_size = 128
+text_size = 14
+default_view = "icon-view"
+arrange_by = None
+show_status_bar = False
+show_tab_view = False
+show_toolbar = False
+show_pathbar = False
+show_sidebar = False
