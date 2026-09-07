@@ -87,13 +87,17 @@ The output must be `arm64`.
 
 ## GitHub Actions
 
-The `Build packages` workflow supports two ways to run:
+The `Build packages` workflow runs in three cases:
 
-- Start it by hand from a branch to build development packages. Their names
-  include the commit ID. The files appear under **Artifacts** on the workflow
-  run page. This does not create a GitHub release.
+- Push to `main` to build development packages automatically.
+- Start it by hand from a branch to build development packages on request.
 - Push a version tag, such as `v1.0.0-alpha.0`, to build a named release. This
   also creates or updates a draft GitHub release.
+
+Development package names include the commit ID. The files appear under
+**Artifacts** on the workflow run page. Development builds do not create a
+GitHub release. Later pushes to `main` do not cancel checks or replace queued
+builds for an earlier commit.
 
 The workflow passes the tag to CMake through `ROGUE_RELEASE_TAG`. CMake checks
 that the tag points to the current commit and its three-part number matches

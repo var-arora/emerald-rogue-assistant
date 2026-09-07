@@ -3,6 +3,8 @@ name: Build packages
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
 
@@ -13,7 +15,7 @@ env:
   ROGUE_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'latest' }}
   cancel-in-progress: false
 
 jobs:
