@@ -123,6 +123,19 @@ struct AssetCollection
 		gfx.draw(text);
 	}
 
+	bool DrawButton(Window& window, std::string const& label, sf::Vector2f position, float width)
+	{
+		sf::FloatRect const bounds(position, sf::Vector2f(width, 10));
+		sf::RectangleShape background(bounds.size);
+		background.setPosition(position);
+		background.setFillColor(m_ClearColour);
+		background.setOutlineColor(m_LightFontColour);
+		background.setOutlineThickness(0.5F);
+		window.GetHandle()->draw(background);
+		DrawCenteredText(*window.GetHandle(), label, position + sf::Vector2f(width / 2, 0), 8, m_DarkFontColour);
+		return window.WasClicked(bounds);
+	}
+
 	void DrawLeftAlignedText(sf::RenderWindow& gfx, std::string const& msg, sf::Vector2f pos, int fontSize,
 							 sf::Color const& colour)
 	{
@@ -194,6 +207,35 @@ bool PrimaryUI::Render(Window& window, rogue::app::UiSnapshot const& snapshot, C
 	gfx.setView(view);
 
 	gfx.clear(m_Assets->m_ClearColour);
+	if (!snapshot.connections.empty())
+	{
+		m_EditingBridgePort = false;
+		bool const enteringAddress = !m_ShowSetupHelp &&
+			std::any_of(snapshot.connections.begin(), snapshot.connections.end(), [](auto const& connection) {
+				return connection.multiplayer.awaitingAddress;
+			});
+		bool const clicked = window.WasClicked(sf::FloatRect(
+			c_CentreOffset + sf::Vector2f(-60, m_ShowSetupHelp ? 58.0F : 68.0F), sf::Vector2f(120, 10)));
+		if (clicked || (!enteringAddress && window.ButtonJustReleased(sf::Keyboard::Key::H)))
+		{
+			if (m_ShowSetupHelp)
+				window.SetInputText(m_InputBeforeHelp);
+			else
+			{
+				m_InputBeforeHelp = window.GetInputText();
+				window.ClearInputText();
+			}
+			m_ShowSetupHelp = !m_ShowSetupHelp;
+		}
+		(void)m_Assets->DrawButton(window, m_ShowSetupHelp ? "[H] Back to game status" : "[H] Setup help",
+			c_CentreOffset + sf::Vector2f(-60, m_ShowSetupHelp ? 58.0F : 68.0F), 120);
+	}
+	else
+	{
+		if (m_ShowSetupHelp)
+			window.ClearInputText();
+		m_ShowSetupHelp = false;
+	}
 
 	// Draw the title or the latest error.
 	std::string const& errorStr = snapshot.error;
@@ -212,17 +254,18 @@ bool PrimaryUI::Render(Window& window, rogue::app::UiSnapshot const& snapshot, C
 								   m_Assets->m_LightFontColour);
 
 	// Draw the connection instructions.
-	if (snapshot.connections.empty())
+	if (snapshot.connections.empty() || m_ShowSetupHelp)
 	{
-		m_Assets->DrawLeftAlignedText(gfx, "Waiting for Emerald Rogue" + m_Assets->m_LoadingSpinnerAnimText,
+		m_Assets->DrawLeftAlignedText(gfx, m_ShowSetupHelp ? "Connect to mGBA" : "Waiting for Emerald Rogue" + m_Assets->m_LoadingSpinnerAnimText,
 									  c_CentreOffset + sf::Vector2f(-74, -55), 14, m_Assets->m_LightFontColour);
 
 		m_Assets->DrawLeftAlignedText(gfx,
-									  "Connect to mGBA 0.10.5 or later:\n"
-									  "1. Open Emerald Rogue in mGBA\n"
-									  "2. Select Tools > Scripting...\n"
-									  "3. Select File > Load Script...\n"
-									  "4. Open RogueAssistant_mGBA.lua",
+									  "Use mGBA 0.10.5 or later.\n"
+									  "1. Open Emerald Rogue in mGBA.\n"
+									  "2. Click Open script folder below.\n"
+									  "3. In mGBA: Tools > Scripting...\n"
+									  "4. Select File > Load Script...\n"
+									  "5. Open RogueAssistant_mGBA.lua.",
 									  c_CentreOffset + sf::Vector2f(-90, -38), 11, m_Assets->m_LightFontColour);
 	}
 	else
@@ -297,7 +340,8 @@ bool PrimaryUI::Render(Window& window, rogue::app::UiSnapshot const& snapshot, C
 void PrimaryUI::RenderBridgeControls(Window& window, rogue::app::UiSnapshot const& snapshot,
 									 CommandSink const& submitCommand)
 {
-	if (!snapshot.connections.empty())
+	bool const connected = !snapshot.connections.empty();
+	if (connected && !m_ShowSetupHelp)
 		return;
 
 	sf::RenderWindow& gfx = *window.GetHandle();
@@ -317,7 +361,7 @@ void PrimaryUI::RenderBridgeControls(Window& window, rogue::app::UiSnapshot cons
 		bridgeState = "Connected to mGBA on port " + std::to_string(snapshot.bridgePort);
 		break;
 	}
-	if (!m_EditingBridgePort && window.ButtonJustReleased(sf::Keyboard::Key::P))
+	if (!connected && !m_EditingBridgePort && window.ButtonJustReleased(sf::Keyboard::Key::P))
 	{
 		m_EditingBridgePort = true;
 		window.SetInputText(std::to_string(snapshot.bridgePort));
@@ -348,7 +392,7 @@ void PrimaryUI::RenderBridgeControls(Window& window, rogue::app::UiSnapshot cons
 		return;
 	}
 
-	if (window.ButtonJustReleased(sf::Keyboard::Key::E))
+	if (!connected && window.ButtonJustReleased(sf::Keyboard::Key::E))
 	{
 		rogue::app::UiCommand command;
 		command.type = rogue::app::UiCommand::Type::ExportBridgeScript;
@@ -357,7 +401,11 @@ void PrimaryUI::RenderBridgeControls(Window& window, rogue::app::UiSnapshot cons
 		else
 			m_ActionMessage = "The app is busy. Try again.";
 	}
-	if (window.ButtonJustReleased(sf::Keyboard::Key::C))
+	bool const copyClicked = m_Assets->DrawButton(window, "[C] Copy script path",
+		c_CentreOffset + sf::Vector2f(-99, 68), 96);
+	bool const folderClicked = m_Assets->DrawButton(window, "[R] Open script folder",
+		c_CentreOffset + sf::Vector2f(3, 68), 96);
+	if (copyClicked || window.ButtonJustReleased(sf::Keyboard::Key::C))
 	{
 		if (snapshot.bridgeScriptPath.empty())
 		{
@@ -370,7 +418,7 @@ void PrimaryUI::RenderBridgeControls(Window& window, rogue::app::UiSnapshot cons
 			m_ActionMessage = "Script path copied.";
 		}
 	}
-	if (window.ButtonJustReleased(sf::Keyboard::Key::R))
+	if (folderClicked || window.ButtonJustReleased(sf::Keyboard::Key::R))
 	{
 		if (snapshot.bridgeScriptPath.empty())
 		{
@@ -398,9 +446,8 @@ void PrimaryUI::RenderBridgeControls(Window& window, rogue::app::UiSnapshot cons
 	if (!action.empty())
 		m_Assets->DrawCenteredText(gfx, action, c_CentreOffset + sf::Vector2f(0, 49), 8,
 								   m_Assets->m_DarkFontColour);
-	m_Assets->DrawCenteredText(gfx, "[P] Change port  [E] Export script", c_CentreOffset + sf::Vector2f(0, 59), 8,
-							   m_Assets->m_LightFontColour);
-	m_Assets->DrawCenteredText(gfx, "[C] Copy path  [R] Open folder", c_CentreOffset + sf::Vector2f(0, 69), 8,
+	if (!connected)
+		m_Assets->DrawCenteredText(gfx, "[P] Change port  [E] Export script", c_CentreOffset + sf::Vector2f(0, 59), 8,
 							   m_Assets->m_LightFontColour);
 }
 

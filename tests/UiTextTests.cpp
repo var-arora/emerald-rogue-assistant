@@ -1,4 +1,5 @@
 #include "UI/RefreshState.h"
+#include "UI/PointerClick.h"
 #include "UI/TextCache.h"
 #include "UI/TextEncoding.h"
 
@@ -9,6 +10,58 @@
 
 #include <filesystem>
 #include <string>
+
+TEST_CASE("UI buttons require a press and release inside the same bounds", "[ui][input]")
+{
+	rogue::ui::PointerClick pointer;
+	sf::FloatRect const bounds({10, 20}, {40, 10});
+	auto const map = [](sf::Vector2i position) { return sf::Vector2f(position); };
+	pointer.Release({20, 25});
+	REQUIRE_FALSE(pointer.Within(bounds, map));
+	pointer.Press({20, 25});
+	REQUIRE_FALSE(pointer.Within(bounds, map));
+	pointer.BeginFrame();
+	pointer.Release({30, 25});
+	REQUIRE(pointer.Within(bounds, map));
+	pointer.BeginFrame();
+	REQUIRE_FALSE(pointer.Within(bounds, map));
+
+	SECTION("Dragging out does not activate the button")
+	{
+		pointer.Press({20, 25});
+		pointer.Release({60, 25});
+		REQUIRE_FALSE(pointer.Within(bounds, map));
+	}
+	SECTION("Dragging in does not activate the button")
+	{
+		pointer.Press({5, 25});
+		pointer.Release({20, 25});
+		REQUIRE_FALSE(pointer.Within(bounds, map));
+	}
+	SECTION("Losing focus cancels the click")
+	{
+		pointer.Press({20, 25});
+		pointer.Cancel();
+		pointer.Release({20, 25});
+		REQUIRE_FALSE(pointer.Within(bounds, map));
+	}
+	SECTION("A handled click cannot activate another button")
+	{
+		pointer.Press({20, 25});
+		pointer.Release({20, 25});
+		REQUIRE(pointer.Within(bounds, map));
+		pointer.Cancel();
+		REQUIRE_FALSE(pointer.Within(bounds, map));
+	}
+	SECTION("Hit testing uses the displayed view coordinates")
+	{
+		pointer.Press({40, 50});
+		pointer.Release({60, 50});
+		auto const scaled = [](sf::Vector2i position) { return sf::Vector2f(position) / 2.0F; };
+		REQUIRE(pointer.Within(bounds, scaled));
+		REQUIRE_FALSE(pointer.Within(bounds, map));
+	}
+}
 
 TEST_CASE("UI text decodes UTF-8 before rendering", "[ui][utf8]")
 {

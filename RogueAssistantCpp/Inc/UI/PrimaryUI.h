@@ -37,5 +37,7 @@ private:
 	rogue::ui::RefreshState m_Refresh;
 	rogue::app::UiPage m_CurrentPage;
 	bool m_EditingBridgePort = false;
+	bool m_ShowSetupHelp = false;
+	std::string m_InputBeforeHelp;
 	std::string m_ActionMessage;
 };

@@ -1,4 +1,5 @@
 #pragma once
+#include "UI/PointerClick.h"
 #include <SFML/Window.hpp>
 #include <bitset>
 #include <filesystem>
@@ -50,6 +51,7 @@ class Window
 	{
 		return m_HadVisualEvent;
 	}
+	bool WasClicked(sf::FloatRect const& bounds);
 
 	inline sf::RenderWindow* GetHandle()
 	{
@@ -96,4 +98,5 @@ class Window
 	std::bitset<sf::Keyboard::KeyCount> m_CurrentKeyStates;
 	std::bitset<sf::Keyboard::KeyCount> m_PreviousKeyStates;
 	bool m_HadVisualEvent = true;
+	rogue::ui::PointerClick m_PointerClick;
 };
