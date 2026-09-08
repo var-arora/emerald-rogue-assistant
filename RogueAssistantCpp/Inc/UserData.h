@@ -4,6 +4,11 @@
 #include <fstream>
 #include <string>
 
+namespace rogue::platform
+{
+struct AppPaths;
+}
+
 class UserData
 {
 public:
@@ -15,6 +20,7 @@ public:
 	static bool TryOpenAppendFile(std::wstring const& path, std::fstream& outStream, bool createIfMissing = true);
 
 	static bool Init();
+	static bool Init(rogue::platform::AppPaths paths);
 	static void Update();
 	static void Shutdown();
 

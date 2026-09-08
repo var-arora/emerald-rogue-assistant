@@ -19,16 +19,16 @@ update too; mGBA may still be running the old copy.
 ## The port is already in use
 
 If the app reports "Cannot listen on port", close any other copies of Emerald
-Rogue Assistant and restart it. Port changes in the window do not work after
-this startup error. If another program needs that port, start the assistant
-with a different `--bridge-port` value. See
-[Command line](installation.md#command-line).
+Rogue Assistant. Then press `P` in the waiting window and press Enter to retry
+the same port. You do not need to restart the assistant.
 
-Once the app is listening, press `P` on the waiting screen to change the port.
-Enter a port from 1 to 65535, then press Enter. The app keeps the old port if it
+If another program needs that port, press `P`, enter a different port from 1
+to 65535, then press Enter. The app keeps a working connection port if it
 cannot open the new one.
 
-Export and reload the Lua script after the port changes.
+The app exports its Lua script after it opens the port. If you changed the
+port, load the updated script in mGBA. You can also set the port when starting
+the app; see [Command line](installation.md#command-line).
 
 ## The ROM is not compatible
 
