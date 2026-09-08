@@ -96,13 +96,19 @@ bool UserData::TryOpenAppendFile(std::wstring const& path, std::fstream& outStre
 bool UserData::Init()
 {
 	std::string error;
-	Paths = rogue::platform::DiscoverAppPaths(error);
-	if (!Paths)
+	auto paths = rogue::platform::DiscoverAppPaths(error);
+	if (!paths)
 	{
 		LOG_ERROR("Cannot initialize application paths: %s", error.c_str());
 		return false;
 	}
+	return Init(std::move(*paths));
+}
 
+bool UserData::Init(rogue::platform::AppPaths paths)
+{
+	Paths = std::move(paths);
+	std::string error;
 	auto const migration = rogue::platform::ImportLegacyWindowsData(*Paths);
 	RogueLog_Initialize(Paths->logFile);
 	for (std::string const& diagnostic : migration.diagnostics)

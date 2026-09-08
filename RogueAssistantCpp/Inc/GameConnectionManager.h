@@ -2,6 +2,7 @@
 
 #include "Application/ISessionRuntime.h"
 #include "Bridge/GameMemoryTransport.h"
+#include "Platform/AppPaths.h"
 
 #include <cstdint>
 #include <memory>
@@ -23,7 +24,8 @@ class GameConnectionManager final : public rogue::app::ISessionRuntime
 {
   public:
 	explicit GameConnectionManager(std::shared_ptr<IGameMemoryTransport> transport);
-	explicit GameConnectionManager(std::optional<std::uint16_t> bridgePortOverride);
+	explicit GameConnectionManager(std::optional<std::uint16_t> bridgePortOverride,
+								   std::optional<rogue::platform::AppPaths> paths = std::nullopt);
 	~GameConnectionManager() override;
 
 	void Start() override;
@@ -42,6 +44,7 @@ class GameConnectionManager final : public rogue::app::ISessionRuntime
 
 	std::shared_ptr<IGameMemoryTransport> m_Transport;
 	std::optional<std::uint16_t> m_BridgePortOverride;
+	std::optional<rogue::platform::AppPaths> m_Paths;
 	std::string m_RecentError;
 	std::string m_BridgeScriptPath;
 	std::string m_BridgeMessage;

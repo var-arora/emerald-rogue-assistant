@@ -25,8 +25,9 @@ GameConnectionManager::GameConnectionManager(std::shared_ptr<IGameMemoryTranspor
 		throw std::invalid_argument("GameConnectionManager requires a memory transport");
 }
 
-GameConnectionManager::GameConnectionManager(std::optional<std::uint16_t> bridgePortOverride)
-	: m_BridgePortOverride(bridgePortOverride), m_UsesPortableBridge(true)
+GameConnectionManager::GameConnectionManager(std::optional<std::uint16_t> bridgePortOverride,
+										   std::optional<rogue::platform::AppPaths> paths)
+	: m_BridgePortOverride(bridgePortOverride), m_Paths(std::move(paths)), m_UsesPortableBridge(true)
 {
 }
 
@@ -39,7 +40,7 @@ void GameConnectionManager::Start()
 {
 	if (m_Started)
 		return;
-	if (!UserData::Init())
+	if (!(m_Paths ? UserData::Init(*m_Paths) : UserData::Init()))
 	{
 		UserData::Shutdown();
 		throw std::runtime_error("Cannot open the app data folder.");
@@ -59,8 +60,7 @@ void GameConnectionManager::Start()
 		catch (std::exception const& exception)
 		{
 			LOG_ERROR("Cannot start mGBA listener: %s", exception.what());
-			throw std::runtime_error(
-				"Cannot listen on port " + std::to_string(m_BridgePort) + ".");
+			PushError("Cannot listen on port " + std::to_string(m_BridgePort) + ".");
 		}
 		ExportPortableScript();
 	}
@@ -208,7 +208,7 @@ void GameConnectionManager::ChangeBridgePort(std::string const& value)
 		PushError("Enter a port from 1 to 65535.");
 		return;
 	}
-	if (candidate.bridgePort != m_BridgePort)
+	if (candidate.bridgePort != m_BridgePort || !m_Transport || m_Transport->State() == TransportState::Stopped)
 	{
 		std::shared_ptr<IGameMemoryTransport> replacement;
 		try
@@ -222,13 +222,15 @@ void GameConnectionManager::ChangeBridgePort(std::string const& value)
 			return;
 		}
 
-		m_Transport->Stop();
+		if (m_Transport)
+			m_Transport->Stop();
 		DisconnectConnections();
 		m_Transport = std::move(replacement);
 		m_BridgePort = candidate.bridgePort;
 		m_BridgePortOverride.reset();
 		m_ListeningForConnections = true;
 	}
+	m_RecentError.clear();
 	UserData::SetSavedString(std::string(rogue::platform::BridgePortKey), std::to_string(m_BridgePort));
 	ExportPortableScript();
 }
@@ -240,6 +242,9 @@ void GameConnectionManager::PushError(std::string error)
 
 void GameConnectionManager::UpdateConnections()
 {
+	if (!m_Transport)
+		return;
+
 	if (m_ActiveConnections.empty() && !m_AcceptingConnection)
 	{
 		// SessionWorker polls a listening TCP transport before a GameSession
