@@ -123,7 +123,7 @@ add either app to Steam Gaming Mode. Connect mGBA using the steps below.
 
 1. Start Emerald Rogue Assistant. It saves a copy of its Lua script and waits for mGBA.
 2. Open Emerald Rogue in mGBA.
-3. Press `R` in Emerald Rogue Assistant to open the exported script folder.
+3. Click **Open script folder** in Emerald Rogue Assistant, or press `R`.
 4. In mGBA, select **Tools > Scripting**.
 5. Select **File > Load Script**.
 6. Open `RogueAssistant_mGBA.lua` from the exported script folder.
@@ -135,6 +135,14 @@ The waiting screen has these controls:
 - `E`: export the script again
 - `C`: copy the script path
 - `R`: open the script folder
+
+You can also click **Copy script path**. Once connected, click **Setup help**
+to see the instructions and script buttons again. This does not stop the
+connection or a storage transfer. Click **Back to game status** when you are
+done. The `H` shortcut opens and closes help, except while entering a multiplayer
+address. Use the mouse to open help while entering an address; your text is kept.
+
+Port changes and script export are available only on the waiting screen.
 
 The script contains the port number used when it was exported. After changing
 the port, export the script again and load that copy in mGBA. Also reload the

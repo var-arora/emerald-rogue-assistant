@@ -63,6 +63,16 @@ bool Window::Destroy()
 	return true;
 }
 
+bool Window::WasClicked(sf::FloatRect const& bounds)
+{
+	bool const clicked = m_PointerClick.Within(bounds, [this](sf::Vector2i position) {
+		return m_WindowHandle->mapPixelToCoords(position);
+	});
+	if (clicked)
+		m_PointerClick.Cancel();
+	return clicked;
+}
+
 void Window::EnterMainLoop(WindowCallback const& callback, void* userData)
 {
 	if (!m_WindowHandle)
@@ -78,9 +88,24 @@ void Window::EnterMainLoop(WindowCallback const& callback, void* userData)
 		m_HadVisualEvent = firstFrame;
 		firstFrame = false;
 		m_PreviousKeyStates = m_CurrentKeyStates;
+		m_PointerClick.BeginFrame();
 
 		while (auto const event = m_WindowHandle->pollEvent())
 		{
+			if (auto const* pressed = event->getIf<sf::Event::MouseButtonPressed>();
+				pressed && pressed->button == sf::Mouse::Button::Left)
+			{
+				m_PointerClick.Press(pressed->position);
+				m_HadVisualEvent = true;
+			}
+			if (auto const* released = event->getIf<sf::Event::MouseButtonReleased>();
+				released && released->button == sf::Mouse::Button::Left)
+			{
+				m_PointerClick.Release(released->position);
+				m_HadVisualEvent = true;
+			}
+			if (event->is<sf::Event::FocusLost>())
+				m_PointerClick.Cancel();
 			if (event->is<sf::Event::Resized>() || event->is<sf::Event::FocusGained>() ||
 				event->is<sf::Event::KeyPressed>() || event->is<sf::Event::KeyReleased>() ||
 				event->is<sf::Event::TextEntered>())
